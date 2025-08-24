@@ -1,10 +1,10 @@
-/* 
+/*
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   Permissions-Policy: geolocation=(), camera=(), microphone=()
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.novatradeapp.com; img-src 'self' data: https:; script-src 'self'; style-src 'self' 'unsafe-inline';
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.novatradeapp.com https://client.crisp.chat; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' https://client.crisp.chat; style-src 'self' 'unsafe-inline'
 
 /*.html
   Cache-Control: no-cache
