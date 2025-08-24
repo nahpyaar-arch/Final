@@ -1,5 +1,5 @@
 // src/components/Layout.tsx
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import {
   Home,
@@ -14,6 +14,13 @@ import {
   Shield,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
+
+declare global {
+  interface Window {
+    $crisp?: any[];
+    CRISP_WEBSITE_ID?: string;
+  }
+}
 
 const LANGUAGES = [
   { code: 'en', name: 'English', flag: '🇺🇸' },
@@ -33,7 +40,7 @@ export default function Layout() {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLanguageOpen, setIsLanguageOpen] = useState(false);
-  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false); // fallback modal
 
   // Build navigation with translated labels on every render (reactive to language)
   const navigation = [
@@ -59,6 +66,32 @@ export default function Layout() {
   const isActive = (href: string) => {
     if (href === '/') return location.pathname === '/';
     return location.pathname.startsWith(href);
+  };
+
+  // --- CRISP: attach user info when available
+  useEffect(() => {
+    if (!window.$crisp) return;
+    try {
+      if (user?.name) window.$crisp.push(['set', 'user:nickname', user.name]);
+      if (user?.email) window.$crisp.push(['set', 'user:email', user.email]);
+      if (user?.id) window.$crisp.push(['set', 'session:data', [['user_id', String(user.id)]]]);
+    } catch {
+      // ignore
+    }
+  }, [user]);
+
+  // Open Crisp chat or fallback to local modal
+  const openChat = () => {
+    if (window.$crisp) {
+      try {
+        window.$crisp.push(['do', 'chat:show']);
+        window.$crisp.push(['do', 'chat:open']);
+        return;
+      } catch {
+        // if something goes wrong, use fallback modal
+      }
+    }
+    setIsChatOpen(true);
   };
 
   return (
@@ -101,9 +134,9 @@ export default function Layout() {
 
             {/* Right side controls */}
             <div className="flex items-center space-x-4">
-              {/* Live Chat */}
+              {/* Live Chat (Crisp) */}
               <button
-                onClick={() => setIsChatOpen(!isChatOpen)}
+                onClick={openChat}
                 className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-md transition-colors"
                 title="Live Chat"
               >
@@ -150,11 +183,7 @@ export default function Layout() {
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
                 className="md:hidden p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-md"
               >
-                {isMobileMenuOpen ? (
-                  <X className="w-5 h-5" />
-                ) : (
-                  <Menu className="w-5 h-5" />
-                )}
+                {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
             </div>
           </div>
@@ -188,16 +217,13 @@ export default function Layout() {
         )}
       </header>
 
-      {/* Live Chat Modal */}
+      {/* Live Chat Modal (fallback if Crisp hasn't loaded) */}
       {isChatOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-gray-800 rounded-lg w-full max-w-md h-96 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-gray-700">
               <h3 className="text-lg font-semibold text-white">Live Chat</h3>
-              <button
-                onClick={() => setIsChatOpen(false)}
-                className="text-gray-400 hover:text-white"
-              >
+              <button onClick={() => setIsChatOpen(false)} className="text-gray-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -205,7 +231,7 @@ export default function Layout() {
               <div className="space-y-4">
                 <div className="bg-gray-700 p-3 rounded-lg">
                   <p className="text-sm text-gray-300">
-                    Welcome to Nova Live Chat! How can we help you today?
+                    Chat is loading… If the widget doesn’t appear, please try again later.
                   </p>
                 </div>
               </div>
@@ -250,9 +276,7 @@ export default function Layout() {
             <Link
               to="/market"
               className={`flex flex-col items-center justify-center text-xs font-medium ${
-                isActive('/market')
-                  ? 'text-white'
-                  : 'text-gray-400 hover:text-white'
+                isActive('/market') ? 'text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               <TrendingUp className="w-5 h-5 mb-1" />
@@ -268,9 +292,7 @@ export default function Layout() {
             <Link
               to="/assets"
               className={`flex flex-col items-center justify-center text-xs font-medium ${
-                isActive('/assets')
-                  ? 'text-white'
-                  : 'text-gray-400 hover:text-white'
+                isActive('/assets') ? 'text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               <Wallet className="w-5 h-5 mb-1" />
@@ -281,9 +303,7 @@ export default function Layout() {
             <Link
               to="/profile"
               className={`flex flex-col items-center justify-center text-xs font-medium ${
-                isActive('/profile')
-                  ? 'text-white'
-                  : 'text-gray-400 hover:text-white'
+                isActive('/profile') ? 'text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               <User className="w-5 h-5 mb-1" />
@@ -292,12 +312,8 @@ export default function Layout() {
           </div>
 
           {/* Floating Trade button */}
-          <Link
-            to="/trade"
-            className="absolute -top-6 left-1/2 -translate-x-1/2"
-          >
-            <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600
-                            flex items-center justify-center shadow-xl ring-4 ring-gray-900">
+          <Link to="/trade" className="absolute -top-6 left-1/2 -translate-x-1/2">
+            <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center shadow-xl ring-4 ring-gray-900">
               <BarChart3 className="w-6 h-6 text-white" />
             </div>
           </Link>

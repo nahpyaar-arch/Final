@@ -5,7 +5,45 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nova - Cryptocurrency Trading Platform</title>
-    <meta name="description" content="Nova - The next generation cryptocurrency trading platform with real-time market data, secure trading, and comprehensive portfolio management." />
+    <meta
+      name="description"
+      content="Nova - The next generation cryptocurrency trading platform with real-time market data, secure trading, and comprehensive portfolio management."
+    />
+
+    <!-- Crisp Chat -->
+    <script>
+      window.$crisp = [];
+      window.CRISP_WEBSITE_ID = "7dc0599e-e38b-496f-8675-ffa37b280c94"; // <- replace this
+      (function () {
+        var d = document, s = d.createElement("script");
+        s.src = "https://client.crisp.chat/l.js";
+        s.async = 1;
+        d.getElementsByTagName("head")[0].appendChild(s);
+      })();
+  // Hide the launcher after the user closes the chat
+  function hideAfterClose() {
+    window.$crisp.push(["do", "chat:hide"]);
+    // keep it hidden for this tab until user explicitly opens it again
+    sessionStorage.setItem("crisp-hidden", "1");
+  }
+
+  // When chat is closed, hide the widget
+  window.$crisp.push(["on", "chat:closed", hideAfterClose]);
+
+  // If it was hidden earlier in this tab, keep it hidden on navigation
+  if (sessionStorage.getItem("crisp-hidden") === "1") {
+    window.$crisp.push(["do", "chat:hide"]);
+  }
+
+  // (optional) expose a helper to re-open/show it somewhere in your UI
+  window.openSupport = function () {
+    sessionStorage.removeItem("crisp-hidden");
+    window.$crisp.push(["do", "chat:show"]);
+    window.$crisp.push(["do", "chat:open"]);
+  };
+
+    </script>
+    <!-- /Crisp Chat -->
   </head>
   <body>
     <div id="root"></div>
