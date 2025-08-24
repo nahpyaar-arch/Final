@@ -48,12 +48,22 @@ export default function AssetsPage() {
 
   const [copiedAddress, setCopiedAddress] = useState('');
 
-  // auto-refresh balances when entering action tabs
+  // auto-refresh and sanitize when entering action tabs
   useEffect(() => {
     if (activeTab === 'withdraw' || activeTab === 'deposit' || activeTab === 'exchange') {
       refreshData?.();
     }
+    // clear per-tab inputs to avoid stale data
+    setAmount('');
+    setWithdrawAddress('');
+    setWithdrawMemo('');
+    if (activeTab !== 'exchange') setExchangeAmount('');
   }, [activeTab, refreshData]);
+
+  // when coin changes, reset the network to avoid mismatches
+  useEffect(() => {
+    setWithdrawNetwork('');
+  }, [selectedCoin]);
 
   // quick lookup helpers
   const priceOf = (sym: string) => Number(coins.find((c) => c.symbol === sym)?.price ?? 0);
@@ -91,7 +101,7 @@ export default function AssetsPage() {
   }, [balances, coins]);
 
   const copyToClipboard = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
+    navigator.clipboard?.writeText(text);
     setCopiedAddress(key);
     setTimeout(() => setCopiedAddress(''), 2000);
   };
@@ -204,7 +214,8 @@ export default function AssetsPage() {
   })();
 
   return (
-    <div className="min-h-screen bg-gray-900 py-8">
+    // pb-24 so the fixed bottom nav (mobile) doesn't cover content
+    <div className="min-h-screen bg-gray-900 py-8 pb-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-white mb-4">My Assets</h1>
@@ -225,27 +236,30 @@ export default function AssetsPage() {
 
         {/* Action Tabs */}
         <div className="mb-8">
-          <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
-            {[
-              { id: 'overview', name: 'Overview', icon: Wallet },
-              { id: 'deposit', name: 'Deposit', icon: ArrowDownLeft },
-              { id: 'withdraw', name: 'Withdraw', icon: ArrowUpRight },
-              { id: 'exchange', name: 'Exchange', icon: ArrowUpDown },
-            ].map((tab) => {
-              const Icon = tab.icon as any;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex items-center space-x-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    activeTab === tab.id ? 'bg-blue-600 text-white' : 'text-gray-300 hover:text-white hover:bg-gray-700'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span>{tab.name}</span>
-                </button>
-              );
-            })}
+          {/* make tabs wrap/scroll to avoid being cut off on small screens */}
+          <div className="overflow-x-auto">
+            <div className="flex flex-wrap gap-1 bg-gray-800 rounded-lg p-1 min-w-max">
+              {[
+                { id: 'overview', name: 'Overview', icon: Wallet },
+                { id: 'deposit', name: 'Deposit', icon: ArrowDownLeft },
+                { id: 'withdraw', name: 'Withdraw', icon: ArrowUpRight },
+                { id: 'exchange', name: 'Exchange', icon: ArrowUpDown },
+              ].map((tab) => {
+                const Icon = tab.icon as any;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as any)}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      activeTab === tab.id ? 'bg-blue-600 text-white' : 'text-gray-300 hover:text-white hover:bg-gray-700'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span>{tab.name}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
