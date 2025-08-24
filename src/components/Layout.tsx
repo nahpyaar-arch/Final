@@ -1,3 +1,4 @@
+// src/components/Layout.tsx
 import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import {
@@ -159,7 +160,7 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* Mobile Navigation */}
+        {/* Mobile Navigation Drawer */}
         {isMobileMenuOpen && (
           <div className="md:hidden bg-gray-800 border-t border-gray-700">
             <div className="px-2 pt-2 pb-3 space-y-1">
@@ -225,10 +226,85 @@ export default function Layout() {
         </div>
       )}
 
-      {/* Main Content */}
-      <main className="flex-1">
+      {/* Main Content (extra bottom padding for mobile tab bar) */}
+      <main className="flex-1 pb-24 md:pb-0">
         <Outlet />
       </main>
+
+      {/* Bottom Tab Bar – mobile only */}
+      <nav className="fixed bottom-0 inset-x-0 z-40 md:hidden">
+        <div className="relative bg-gray-900/95 backdrop-blur border-t border-gray-800 h-16">
+          <div className="grid grid-cols-5 h-full px-2">
+            {/* Home */}
+            <Link
+              to="/"
+              className={`flex flex-col items-center justify-center text-xs font-medium ${
+                isActive('/') ? 'text-white' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Home className="w-5 h-5 mb-1" />
+              <span>{t('nav.home')}</span>
+            </Link>
+
+            {/* Market */}
+            <Link
+              to="/market"
+              className={`flex flex-col items-center justify-center text-xs font-medium ${
+                isActive('/market')
+                  ? 'text-white'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <TrendingUp className="w-5 h-5 mb-1" />
+              <span>{t('nav.market')}</span>
+            </Link>
+
+            {/* Center label (under floating Trade button) */}
+            <div className="flex items-end justify-center pb-1">
+              <span className="text-[10px] text-gray-400">{t('nav.trade')}</span>
+            </div>
+
+            {/* Assets */}
+            <Link
+              to="/assets"
+              className={`flex flex-col items-center justify-center text-xs font-medium ${
+                isActive('/assets')
+                  ? 'text-white'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Wallet className="w-5 h-5 mb-1" />
+              <span>{t('nav.assets')}</span>
+            </Link>
+
+            {/* Profile */}
+            <Link
+              to="/profile"
+              className={`flex flex-col items-center justify-center text-xs font-medium ${
+                isActive('/profile')
+                  ? 'text-white'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <User className="w-5 h-5 mb-1" />
+              <span>{t('nav.profile')}</span>
+            </Link>
+          </div>
+
+          {/* Floating Trade button */}
+          <Link
+            to="/trade"
+            className="absolute -top-6 left-1/2 -translate-x-1/2"
+          >
+            <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600
+                            flex items-center justify-center shadow-xl ring-4 ring-gray-900">
+              <BarChart3 className="w-6 h-6 text-white" />
+            </div>
+          </Link>
+        </div>
+        {/* iOS safe-area padding */}
+        <div className="h-[env(safe-area-inset-bottom,0px)] bg-gray-900" />
+      </nav>
     </div>
   );
 }
