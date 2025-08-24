@@ -1,5 +1,5 @@
 // src/components/AssetsPage.tsx
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Wallet, ArrowUpRight, ArrowDownLeft, ArrowUpDown, Copy, Check } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 
@@ -17,9 +17,7 @@ async function postJson<T = any>(url: string, body: any): Promise<T> {
     try {
       const j = await res.json();
       if (j?.message) msg += `: ${j.message}`;
-    } catch {
-      /* ignore JSON parse error */
-    }
+    } catch { /* ignore JSON parse error */ }
     throw new Error(msg);
   }
   try {
@@ -32,12 +30,12 @@ async function postJson<T = any>(url: string, body: any): Promise<T> {
 export default function AssetsPage() {
   const { user, coins, refreshData } = useApp();
 
+  // tabs
   const [activeTab, setActiveTab] =
     useState<'overview' | 'deposit' | 'withdraw' | 'exchange'>('overview');
 
-  const [selectedCoin, setSelectedCoin] = useState('BTC');
-
   // shared inputs
+  const [selectedCoin, setSelectedCoin] = useState('BTC');
   const [amount, setAmount] = useState('');
   const [withdrawAddress, setWithdrawAddress] = useState('');
   const [withdrawNetwork, setWithdrawNetwork] = useState('');
@@ -49,6 +47,13 @@ export default function AssetsPage() {
   const [exchangeAmount, setExchangeAmount] = useState('');
 
   const [copiedAddress, setCopiedAddress] = useState('');
+
+  // auto-refresh balances when entering action tabs
+  useEffect(() => {
+    if (activeTab === 'withdraw' || activeTab === 'deposit' || activeTab === 'exchange') {
+      refreshData?.();
+    }
+  }, [activeTab, refreshData]);
 
   // quick lookup helpers
   const priceOf = (sym: string) => Number(coins.find((c) => c.symbol === sym)?.price ?? 0);
@@ -94,33 +99,29 @@ export default function AssetsPage() {
   // -------- Handlers --------------------------------------------------------
 
   async function handleDeposit() {
-  const uid = user?.id;
-  if (!uid) { alert('Please sign in again.'); return; }
-  const amt = Number(amount);
-  if (!withdrawNetwork || !isFinite(amt) || amt <= 0) {
-    alert('Enter a valid amount and network.');
-    return;
+    const uid = user?.id;
+    if (!uid) { alert('Please sign in again.'); return; }
+    const amt = Number(amount);
+    if (!withdrawNetwork || !isFinite(amt) || amt <= 0) {
+      alert('Enter a valid amount and network.');
+      return;
+    }
+    try {
+      await postJson('/.netlify/functions/create-deposit', {
+        user_id: uid, coin_symbol: selectedCoin, amount: amt, details: { network: withdrawNetwork }
+      });
+      setAmount('');
+      await refreshData?.();
+      alert('Deposit request submitted for admin approval.');
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message || 'Deposit failed');
+    }
   }
-  try {
-    await postJson('/.netlify/functions/create-deposit', {
-      user_id: uid, coin_symbol: selectedCoin, amount: amt, details: { network: withdrawNetwork }
-    });
-    setAmount('');
-    await refreshData?.();
-    alert('Deposit request submitted for admin approval.');
-  } catch (e:any) {
-    console.error(e);
-    alert(e?.message || 'Deposit failed');
-  }
-}
-
 
   async function handleWithdraw() {
     const uid = user?.id;
-    if (!uid) {
-      alert('Please sign in again.');
-      return;
-    }
+    if (!uid) { alert('Please sign in again.'); return; }
 
     const amt = Number(amount);
     if (!withdrawAddress?.trim() || !withdrawNetwork || !isFinite(amt) || amt <= 0) {
@@ -129,21 +130,14 @@ export default function AssetsPage() {
     }
 
     const available = Number(balances[selectedCoin] ?? 0);
-    if (available < amt) {
-      alert('Insufficient balance.');
-      return;
-    }
+    if (available < amt) { alert('Insufficient balance.'); return; }
 
     try {
       const resp = await postJson<TxResp>('/.netlify/functions/create-withdraw', {
         user_id: uid,
         coin_symbol: selectedCoin,
         amount: amt,
-        details: {
-          address: withdrawAddress.trim(),
-          network: withdrawNetwork,
-          memo: withdrawMemo || '',
-        },
+        details: { address: withdrawAddress.trim(), network: withdrawNetwork, memo: withdrawMemo || '' },
       });
 
       if (!resp?.ok) throw new Error(resp?.message || 'Failed to create withdrawal');
@@ -161,26 +155,14 @@ export default function AssetsPage() {
 
   async function handleExchange() {
     const uid = user?.id;
-    if (!uid) {
-      alert('Please sign in again.');
-      return;
-    }
-    if (exchangeFrom === exchangeTo) {
-      alert('Choose two different coins.');
-      return;
-    }
+    if (!uid) { alert('Please sign in again.'); return; }
+    if (exchangeFrom === exchangeTo) { alert('Choose two different coins.'); return; }
 
     const amt = Number(exchangeAmount);
-    if (!isFinite(amt) || amt <= 0) {
-      alert('Enter a valid amount.');
-      return;
-    }
+    if (!isFinite(amt) || amt <= 0) { alert('Enter a valid amount.'); return; }
 
     const have = Number(balances[exchangeFrom] ?? 0);
-    if (have < amt) {
-      alert('Insufficient balance.');
-      return;
-    }
+    if (have < amt) { alert('Insufficient balance.'); return; }
 
     const resp = await postJson<TxResp>('/.netlify/functions/exchange', {
       user_id: uid,
@@ -192,10 +174,7 @@ export default function AssetsPage() {
     setExchangeAmount('');
     await refreshData?.();
 
-    if (!resp?.ok) {
-      alert(resp?.message || 'Exchange failed.');
-      return;
-    }
+    if (!resp?.ok) { alert(resp?.message || 'Exchange failed.'); return; }
     const got = Number(resp?.to_amount ?? 0);
     alert(`Exchanged ${amt} ${exchangeFrom} → ${got.toFixed(6)} ${exchangeTo}`);
   }
@@ -543,7 +522,6 @@ export default function AssetsPage() {
                           const v = e.target.value;
                           setExchangeFrom(v);
                           if (v === exchangeTo) {
-                            // auto-flip if both equal
                             const firstOther = coinOptions.find((o) => o.value !== v)?.value ?? 'USDT';
                             setExchangeTo(firstOther);
                           }

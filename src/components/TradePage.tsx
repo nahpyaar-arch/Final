@@ -3,8 +3,32 @@ import { useState } from 'react';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 
+type TxResp = { ok: boolean; id?: string; to_amount?: number; fee?: number; message?: string };
+
+async function postJson<T = any>(url: string, body: any): Promise<T> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let msg = `${url} -> ${res.status}`;
+    try {
+      const j = await res.json();
+      if (j?.message) msg += `: ${j.message}`;
+    } catch {}
+    throw new Error(msg);
+  }
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return {} as T;
+  }
+}
+
 export default function TradePage() {
-  const { coins, user, updateBalance, addTransaction } = useApp();
+  const { coins, user, refreshData } = useApp();
+
   const [selectedCoin, setSelectedCoin] = useState('BTC');
   const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy');
   const [amount, setAmount] = useState('');
@@ -13,60 +37,85 @@ export default function TradePage() {
   const [showPreview, setShowPreview] = useState(false);
 
   const selectedCoinData = coins.find((coin) => coin.symbol === selectedCoin);
-  const userBalance = user?.balances[selectedCoin] || 0;
-  const usdtBalance = user?.balances['USDT'] || 0;
+  const userBalance = Number(user?.balances[selectedCoin] ?? 0);
+  const usdtBalance = Number(user?.balances['USDT'] ?? 0);
+
+  const effectivePrice =
+    orderType === 'limit' && limitPrice
+      ? Number(limitPrice)
+      : Number(selectedCoinData?.price ?? 0);
 
   const calculateTotal = () => {
-    if (!selectedCoinData || !amount) return 0;
-    const price =
-      orderType === 'limit' && limitPrice
-        ? parseFloat(limitPrice)
-        : selectedCoinData.price;
-    return parseFloat(amount) * price;
+    const amt = Number(amount || 0);
+    if (!amt || !effectivePrice) return 0;
+    return amt * effectivePrice; // total USDT
   };
 
-  const handleTrade = () => {
-    if (!user || !selectedCoinData || !amount) return;
-
-    const tradeAmount = parseFloat(amount);
-    const total = calculateTotal();
-
-    if (tradeType === 'buy') {
-      if (usdtBalance < total) {
-        alert('Insufficient USDT balance');
-        return;
-      }
-      updateBalance('USDT', -total).catch(console.error);
-      updateBalance(selectedCoin, tradeAmount).catch(console.error);
-    } else {
-      if (userBalance < tradeAmount) {
-        alert('Insufficient balance');
-        return;
-      }
-      updateBalance(selectedCoin, -tradeAmount).catch(console.error);
-      updateBalance('USDT', total).catch(console.error);
+  const handleTrade = async () => {
+    if (!user?.id) {
+      alert('Please log in again.');
+      return;
+    }
+    const tradeAmount = Number(amount || 0);
+    if (!selectedCoinData || !tradeAmount || tradeAmount <= 0 || !effectivePrice) {
+      alert('Enter a valid amount/price.');
+      return;
     }
 
-    addTransaction({
-      type: 'trade',
-      coin_symbol: selectedCoin,
-      amount: tradeAmount,
-      status: 'completed',
-      user_id: user.id,
-      details: {
-        tradeType,
-        price:
-          orderType === 'limit' && limitPrice
-            ? parseFloat(limitPrice)
-            : selectedCoinData.price,
-        total,
-      },
-    }).catch(console.error);
+    // Only market-like execution on the server; we preview limit but execute at current/effective price.
+    const totalUSDT = tradeAmount * effectivePrice;
 
-    setAmount('');
-    setLimitPrice('');
-    setShowPreview(false);
-    alert(`${tradeType === 'buy' ? 'Bought' : 'Sold'} ${tradeAmount} ${selectedCoin} successfully!`);
+    let from_symbol: string;
+    let to_symbol: string;
+    let from_amount: number;
+
+    if (tradeType === 'buy') {
+      // BUY selectedCoin using USDT
+      if (usdtBalance < totalUSDT) {
+        alert('Insufficient USDT balance.');
+        return;
+      }
+      from_symbol = 'USDT';
+      to_symbol = selectedCoin;
+      from_amount = totalUSDT; // server expects FROM units
+    } else {
+      // SELL selectedCoin for USDT
+      if (userBalance < tradeAmount) {
+        alert('Insufficient balance.');
+        return;
+      }
+      from_symbol = selectedCoin;
+      to_symbol = 'USDT';
+      from_amount = tradeAmount; // FROM units (the coin being sold)
+    }
+
+    try {
+      const resp = await postJson<TxResp>('/.netlify/functions/exchange', {
+        user_id: user.id,
+        from_symbol,
+        to_symbol,
+        amount: from_amount,
+      });
+
+      if (!resp?.ok) {
+        alert(resp?.message || 'Trade failed.');
+        return;
+      }
+
+      setAmount('');
+      setLimitPrice('');
+      setShowPreview(false);
+      await refreshData?.();
+
+      alert(
+        tradeType === 'buy'
+          ? `Bought ${tradeAmount} ${selectedCoin} successfully!`
+          : `Sold ${tradeAmount} ${selectedCoin} successfully!`
+      );
+    } catch (e: any) {
+      console.error('trade error:', e);
+      alert(e?.message || 'Trade failed.');
+    }
   };
 
   if (!user) {
@@ -116,27 +165,24 @@ export default function TradePage() {
                       <p className="text-sm text-gray-400">Current Price</p>
                       <p className="text-xl font-bold text-white">
                         $
-                        {selectedCoinData.price.toLocaleString(undefined, {
+                        {Number(selectedCoinData.price).toLocaleString(undefined, {
                           minimumFractionDigits: 2,
-                          maximumFractionDigits:
-                            selectedCoinData.price < 1 ? 6 : 2,
+                          maximumFractionDigits: Number(selectedCoinData.price) < 1 ? 6 : 2,
                         })}
                       </p>
                     </div>
                     <div
                       className={`flex items-center space-x-1 ${
-                        selectedCoinData.change_24h >= 0
-                          ? 'text-green-400'
-                          : 'text-red-400'
+                        (selectedCoinData.change_24h ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
                       }`}
                     >
-                      {selectedCoinData.change_24h >= 0 ? (
+                      {(selectedCoinData.change_24h ?? 0) >= 0 ? (
                         <TrendingUp className="w-5 h-5" />
                       ) : (
                         <TrendingDown className="w-5 h-5" />
                       )}
                       <span className="font-semibold">
-                        {selectedCoinData.change_24h.toFixed(2)}%
+                        {(selectedCoinData.change_24h ?? 0).toFixed(2)}%
                       </span>
                     </div>
                   </div>
@@ -227,8 +273,8 @@ export default function TradePage() {
                 <div className="mt-2 text-sm text-gray-400">
                   Available:{' '}
                   {tradeType === 'buy'
-                    ? usdtBalance.toFixed(2) + ' USDT'
-                    : userBalance.toFixed(6) + ' ' + selectedCoin}
+                    ? `${usdtBalance.toFixed(2)} USDT`
+                    : `${userBalance.toFixed(6)} ${selectedCoin}`}
                 </div>
               </div>
 
@@ -299,24 +345,24 @@ export default function TradePage() {
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap text-sm text-white font-semibold">
                           $
-                          {coin.price.toLocaleString(undefined, {
+                          {Number(coin.price).toLocaleString(undefined, {
                             minimumFractionDigits: 2,
-                            maximumFractionDigits: coin.price < 1 ? 6 : 2,
+                            maximumFractionDigits: Number(coin.price) < 1 ? 6 : 2,
                           })}
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap">
                           <div
                             className={`flex items-center space-x-1 ${
-                              coin.change_24h >= 0 ? 'text-green-400' : 'text-red-400'
+                              (coin.change_24h ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
                             }`}
                           >
-                            {coin.change_24h >= 0 ? (
+                            {(coin.change_24h ?? 0) >= 0 ? (
                               <TrendingUp className="w-4 h-4" />
                             ) : (
                               <TrendingDown className="w-4 h-4" />
                             )}
                             <span className="text-sm font-semibold">
-                              {coin.change_24h.toFixed(2)}%
+                              {(coin.change_24h ?? 0).toFixed(2)}%
                             </span>
                           </div>
                         </td>
@@ -363,12 +409,7 @@ export default function TradePage() {
                   <div className="flex justify-between">
                     <span className="text-gray-400">Price</span>
                     <span className="text-white">
-                      $
-                      {(
-                        (orderType === 'limit' && limitPrice
-                          ? parseFloat(limitPrice)
-                          : selectedCoinData?.price || 0) as number
-                      ).toFixed(2)}
+                      ${effectivePrice.toFixed(2)}
                     </span>
                   </div>
                   <div className="flex justify-between">
