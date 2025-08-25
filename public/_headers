@@ -4,19 +4,7 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   Permissions-Policy: geolocation=(), camera=(), microphone=()
-  Content-Security-Policy:
-    default-src 'self';
-    img-src 'self' data: https:;
-    font-src 'self' data: https:;
-    style-src 'self' 'unsafe-inline' https://client.crisp.chat https://*.crisp.chat;
-    script-src 'self' 'unsafe-inline' https://client.crisp.chat https://*.crisp.chat;
-    connect-src
-      'self'
-      https://*.supabase.co https://*.supabase.in
-      wss://*.supabase.co wss://*.supabase.in
-      https://api.binance.com https://www.binance.com
-      https://client.crisp.chat https://*.crisp.chat
-      wss://client.relay.crisp.chat;
+  Content-Security-Policy: default-src 'self'; img-src 'self' data: https:; font-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://client.crisp.chat https://*.crisp.chat; script-src 'self' 'unsafe-inline' https://client.crisp.chat https://*.crisp.chat; connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co wss://*.supabase.in https://api.binance.com https://www.binance.com https://client.crisp.chat https://*.crisp.chat wss://client.relay.crisp.chat;
 
 /*.html
   Cache-Control: no-cache
