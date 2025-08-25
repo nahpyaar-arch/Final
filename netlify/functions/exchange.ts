@@ -1,4 +1,3 @@
-// netlify/functions/exchange.ts
 import type { Handler } from '@netlify/functions';
 import { neon } from '@neondatabase/serverless';
 
@@ -22,28 +21,25 @@ export const handler: Handler = async (event) => {
     if (!from || !to || from === to) return { statusCode: 400, body: 'Invalid symbols' };
     if (!Number.isFinite(amount) || amount <= 0) return { statusCode: 400, body: 'Invalid amount' };
 
-    // fetch prices
     const prices = await sql`
       SELECT symbol, price::float AS price
-      FROM coins
-      WHERE symbol IN (${from}, ${to})
+        FROM coins
+       WHERE symbol IN (${from}, ${to})
     `;
-    const priceMap: Record<string, number> = {};
-    for (const row of prices as any[]) priceMap[row.symbol] = Number(row.price);
+    const map: Record<string, number> = {};
+    for (const r of prices as any[]) map[r.symbol] = Number(r.price);
 
-    const fromPrice = priceMap[from];
-    const toPrice = priceMap[to];
+    const fromPrice = map[from], toPrice = map[to];
     if (!fromPrice || !toPrice) {
       return { statusCode: 400, body: JSON.stringify({ ok: false, message: 'Price not available' }) };
     }
 
     const valueUSD = amount * fromPrice;
-    const feeUSD = valueUSD * 0.001; // 0.1% fee
+    const feeUSD = valueUSD * 0.001; // 0.1%
     const toAmount = (valueUSD - feeUSD) / toPrice;
-
-    // 🔒 one atomic operation
     const now = new Date().toISOString();
-    const res = await sql`
+
+    const result = await sql`
       WITH dec AS (
         UPDATE user_balances ub
            SET balance = ub.balance - ${amount}, updated_at = ${now}
@@ -77,12 +73,11 @@ export const handler: Handler = async (event) => {
       SELECT (SELECT id FROM ins LIMIT 1) AS txid;
     `;
 
-    const txid = (res as any)[0]?.txid;
+    const txid = (result as any)[0]?.txid;
     if (!txid) {
       return { statusCode: 400, body: JSON.stringify({ ok: false, message: 'Insufficient balance' }) };
     }
 
-    // return refreshed balances for frontend
     const assets = (await sql`
       SELECT
         c.symbol,
@@ -102,7 +97,7 @@ export const handler: Handler = async (event) => {
       body: JSON.stringify({ ok: true, id: txid, to_amount: toAmount, fee: feeUSD, assets }),
     };
   } catch (e: any) {
-    console.error('exchange error:', e);
+    console.error('exchange', e);
     return { statusCode: 500, body: JSON.stringify({ ok: false, message: String(e?.message || e) }) };
   }
 };
