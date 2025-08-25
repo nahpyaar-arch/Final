@@ -20,26 +20,22 @@ type MoonSchedule = { type: 'daily' | 'weekly'; percentage: string; direction: '
 type PlanRow = { day: string; target_pct: number; note: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+/** UTC helpers (fixes the “only 24th shows” issue) */
 // ─────────────────────────────────────────────────────────────────────────────
-const fmtJST = (d: Date) =>
+const fmtUTC = (d: Date) =>
   new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Tokyo',
+    timeZone: 'UTC',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   }).format(d);
 
-const addDays = (d: Date, n: number) => {
-  const x = new Date(d);
-  x.setDate(x.getDate() + n);
-  return x;
-};
+const addDaysUTC = (d: Date, n: number) =>
+  new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
 
-const parseYmdToLocal = (ymd: string) => {
-  const [y, m, d] = ymd.split('-').map(Number);
-  const utc = new Date(Date.UTC(y, m - 1, d));
-  return new Date(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
+const parseYmdToUTCDate = (ymd: string) => {
+  const [y, m, dd] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y, (m || 1) - 1, dd || 1));
 };
 
 // tiny POST helper
@@ -92,7 +88,7 @@ export default function AdminPage() {
     if (!email) return;
     try {
       setCheckingAdmin(true);
-      const fresh = await NeonDB.getUserByEmail(email);
+      const fresh = await (NeonDB as any).getUserByEmail?.(email);
       setAdminOverride(!!fresh?.is_admin);
     } catch (e) {
       console.error('Admin recheck failed:', e);
@@ -133,17 +129,17 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAllowed]);
 
-  // ── MOON daily planner (via Netlify Functions) ────────────────────────────
-  const [planDate, setPlanDate] = useState<string>(''); // YYYY-MM-DD
+  // ── MOON daily planner (via Netlify Functions) — now using UTC ────────────
+  const [planDate, setPlanDate] = useState<string>(fmtUTC(new Date())); // YYYY-MM-DD (UTC)
   const [planPct, setPlanPct] = useState<string>(''); // "20"
   const [planNote, setPlanNote] = useState<string>('');
   const [plans, setPlans] = useState<PlanRow[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(false);
 
   async function loadPlansWindow(anchorDate?: string) {
-    const anchor = anchorDate ? parseYmdToLocal(anchorDate) : new Date();
-    const fromStr = fmtJST(addDays(anchor, -10));
-    const toStr = fmtJST(addDays(anchor, +10));
+    const anchor = anchorDate ? parseYmdToUTCDate(anchorDate) : new Date();
+    const fromStr = fmtUTC(addDaysUTC(anchor, -10));
+    const toStr = fmtUTC(addDaysUTC(anchor, +10));
     try {
       setLoadingPlans(true);
       const res = await fetch(`/.netlify/functions/get-moon-plans?from=${fromStr}&to=${toStr}`);
@@ -159,7 +155,7 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    if (isAllowed) loadPlansWindow();
+    if (isAllowed) loadPlansWindow(planDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAllowed]);
 
@@ -172,7 +168,7 @@ export default function AdminPage() {
     }
     try {
       await postJson('/.netlify/functions/upsert-moon-plan', {
-        day: planDate,
+        day: planDate,          // YYYY-MM-DD (UTC day string)
         target_pct: pct,
         note: planNote,
       });
@@ -450,13 +446,13 @@ export default function AdminPage() {
               </div>
             </div>
 
-            {/* MOON Daily Target Planner */}
+            {/* MOON Daily Target Planner (UTC) */}
             <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 lg:col-span-2">
               <h2 className="text-xl font-bold text-white mb-6">MOON Daily Target Planner</h2>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Date (JST)</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Date (UTC)</label>
                   <input
                     type="date"
                     value={planDate}
@@ -511,7 +507,7 @@ export default function AdminPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-700">
                       <tr>
-                        <th className="px-4 py-2 text-left text-gray-300">Date</th>
+                        <th className="px-4 py-2 text-left text-gray-300">Date (UTC)</th>
                         <th className="px-4 py-2 text-left text-gray-300">% Target</th>
                         <th className="px-4 py-2 text-left text-gray-300">Note</th>
                         <th className="px-4 py-2 text-left text-gray-300">Actions</th>
@@ -579,7 +575,9 @@ export default function AdminPage() {
                   {pendingDeps.map((t) => (
                     <tr key={t.id} className="hover:bg-gray-700 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{t.user_id}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-semibold">{t.coin_symbol}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-semibold">
+                        {String(t.coin_symbol).toUpperCase()}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{Number(t.amount).toFixed(6)}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{t.details?.network || 'N/A'}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
@@ -638,7 +636,9 @@ export default function AdminPage() {
                   {pendingWds.map((t) => (
                     <tr key={t.id} className="hover:bg-gray-700 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{t.user_id}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-semibold">{t.coin_symbol}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-semibold">
+                        {String(t.coin_symbol).toUpperCase()}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{Number(t.amount).toFixed(6)}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300 font-mono">
                         {t.details?.address ? `${t.details.address.slice(0, 10)}...${t.details.address.slice(-6)}` : 'N/A'}

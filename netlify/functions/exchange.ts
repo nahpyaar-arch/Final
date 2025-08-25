@@ -1,103 +1,142 @@
+// netlify/functions/exchange.ts
 import type { Handler } from '@netlify/functions';
 import { neon } from '@neondatabase/serverless';
+import { randomUUID } from 'crypto';
 
-type AssetRow = { symbol: string; balance: string; price: string; value_usd: string };
+const headers = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+};
+
+const SYM = (x: any) => String(x || '').toUpperCase();
 
 export const handler: Handler = async (event) => {
   try {
-    if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Use POST' };
+    if (event.httpMethod !== 'POST') {
+      return bad('Use POST', 405);
+    }
 
-    const dbUrl = process.env.DATABASE_URL || process.env.VITE_DATABASE_URL;
-    if (!dbUrl) return { statusCode: 500, body: 'DATABASE_URL not set' };
+    const dbUrl =
+      process.env.DATABASE_URL ||
+      process.env.NEON_DATABASE_URL ||
+      process.env.VITE_DATABASE_URL;
+    if (!dbUrl) return bad('DATABASE_URL / NEON_DATABASE_URL not set', 500);
+
     const sql = neon(dbUrl);
 
-    const body = JSON.parse(event.body || '{}');
-    const userId = String(body.user_id || '');
-    const from = String(body.from_symbol || '').toUpperCase();
-    const to = String(body.to_symbol || '').toUpperCase();
-    const amount = Number(body.amount || 0);
-
-    if (!userId) return { statusCode: 400, body: 'Missing user_id' };
-    if (!from || !to || from === to) return { statusCode: 400, body: 'Invalid symbols' };
-    if (!Number.isFinite(amount) || amount <= 0) return { statusCode: 400, body: 'Invalid amount' };
-
-    const prices = await sql`
-      SELECT symbol, price::float AS price
-        FROM coins
-       WHERE symbol IN (${from}, ${to})
-    `;
-    const map: Record<string, number> = {};
-    for (const r of prices as any[]) map[r.symbol] = Number(r.price);
-
-    const fromPrice = map[from], toPrice = map[to];
-    if (!fromPrice || !toPrice) {
-      return { statusCode: 400, body: JSON.stringify({ ok: false, message: 'Price not available' }) };
+    // ── parse & validate
+    let payload: any = {};
+    try {
+      payload = JSON.parse(event.body || '{}');
+    } catch {
+      return bad('Invalid JSON body', 400);
     }
 
-    const valueUSD = amount * fromPrice;
-    const feeUSD = valueUSD * 0.001; // 0.1%
-    const toAmount = (valueUSD - feeUSD) / toPrice;
-    const now = new Date().toISOString();
+    const user_id = String(payload.user_id || '');
+    const FROM = SYM(payload.from_symbol);
+    const TO = SYM(payload.to_symbol);
+    const amount = Number(payload.amount);
 
-    const result = await sql`
-      WITH dec AS (
-        UPDATE user_balances ub
-           SET balance = ub.balance - ${amount}, updated_at = ${now}
-         WHERE ub.user_id = ${userId}::uuid
-           AND LOWER(ub.coin_symbol) = LOWER(${from})
-           AND ub.balance >= ${amount}
-         RETURNING ub.user_id
-      ),
-      ensure AS (
+    if (!user_id) return bad('Missing user_id', 400);
+    if (!FROM) return bad('Missing from_symbol', 400);
+    if (!TO) return bad('Missing to_symbol', 400);
+    if (FROM === TO) return bad('from_symbol and to_symbol must differ', 400);
+    if (!Number.isFinite(amount) || amount <= 0) return bad('Invalid amount', 400);
+
+    // ── prices (case-insensitive) — no TS generics on sql; cast result instead
+    const priceRows = (await sql`
+      SELECT UPPER(symbol) AS symbol, price::float AS price
+      FROM coins
+      WHERE UPPER(symbol) IN (${FROM}, ${TO})
+    `) as unknown as Array<{ symbol: string; price: number }>;
+
+    const priceMap: Record<string, number> = {};
+    for (const r of priceRows) priceMap[r.symbol] = Number(r.price || 0);
+
+    const pFrom = priceMap[FROM] || 0;
+    const pTo = priceMap[TO] || 0;
+    if (!pFrom || !pTo) return bad('price unavailable for one or more symbols', 400);
+
+    // ── begin atomic exchange
+    await sql`BEGIN`;
+    try {
+      // ensure rows exist
+      await sql`
         INSERT INTO user_balances (user_id, coin_symbol, balance, locked_balance, created_at, updated_at)
-        SELECT ${userId}::uuid, ${to}, 0, 0, ${now}, ${now}
+        VALUES (${user_id}, ${FROM}, 0, 0, NOW(), NOW())
         ON CONFLICT (user_id, coin_symbol) DO NOTHING
-        RETURNING 1
-      ),
-      inc AS (
-        UPDATE user_balances ub
-           SET balance = ub.balance + ${toAmount}, updated_at = ${now}
-          FROM dec
-         WHERE ub.user_id = dec.user_id
-           AND LOWER(ub.coin_symbol) = LOWER(${to})
-         RETURNING ub.user_id
-      ),
-      ins AS (
-        INSERT INTO transactions (user_id, type, coin_symbol, amount, status, details, created_at, updated_at)
-        SELECT ${userId}::uuid, 'exchange', ${from}, ${amount}, 'completed',
-               ${JSON.stringify({ from, to, to_amount: toAmount, fee_usd: feeUSD })}::jsonb,
-               ${now}, ${now}
-        FROM inc
-        RETURNING id
-      )
-      SELECT (SELECT id FROM ins LIMIT 1) AS txid;
-    `;
+      `;
+      await sql`
+        INSERT INTO user_balances (user_id, coin_symbol, balance, locked_balance, created_at, updated_at)
+        VALUES (${user_id}, ${TO}, 0, 0, NOW(), NOW())
+        ON CONFLICT (user_id, coin_symbol) DO NOTHING
+      `;
 
-    const txid = (result as any)[0]?.txid;
-    if (!txid) {
-      return { statusCode: 400, body: JSON.stringify({ ok: false, message: 'Insufficient balance' }) };
+      // lock FROM balance row (again: cast result, no sql<…>)
+      const fromBalRows = (await sql`
+        SELECT balance::float AS balance
+        FROM user_balances
+        WHERE user_id = ${user_id} AND UPPER(coin_symbol) = ${FROM}
+        FOR UPDATE
+      `) as unknown as Array<{ balance: number }>;
+
+      const have = Number(fromBalRows?.[0]?.balance ?? 0);
+      if (have < amount) {
+        await sql`ROLLBACK`;
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({
+            ok: false,
+            message: `insufficient ${FROM} balance (need ${amount}, have ${have})`,
+          }),
+        };
+      }
+
+      // value & fee
+      const valueUSD = amount * pFrom;
+      const feeUSD = valueUSD * 0.001; // 0.1%
+      const toAmount = (valueUSD - feeUSD) / pTo;
+
+      // debit FROM
+      await sql`
+        UPDATE user_balances
+        SET balance = balance - ${amount}, updated_at = NOW()
+        WHERE user_id = ${user_id} AND UPPER(coin_symbol) = ${FROM}
+      `;
+
+      // credit TO
+      await sql`
+        UPDATE user_balances
+        SET balance = balance + ${toAmount}, updated_at = NOW()
+        WHERE user_id = ${user_id} AND UPPER(coin_symbol) = ${TO}
+      `;
+
+      // record transaction
+      const txId = randomUUID();
+      await sql`
+        INSERT INTO transactions
+          (id, user_id, type, from_symbol, to_symbol, amount, to_amount, fee, status, created_at, updated_at)
+        VALUES
+          (${txId}, ${user_id}, 'exchange', ${FROM}, ${TO}, ${amount}, ${toAmount}, ${feeUSD}, 'completed', NOW(), NOW())
+      `;
+
+      await sql`COMMIT`;
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({ ok: true, id: txId, to_amount: toAmount, fee: feeUSD }),
+      };
+    } catch (err) {
+      await sql`ROLLBACK`;
+      throw err;
     }
-
-    const assets = (await sql`
-      SELECT
-        c.symbol,
-        COALESCE(ub.balance, 0)                        AS balance,
-        COALESCE(c.price, 0)                           AS price,
-        COALESCE(ub.balance, 0) * COALESCE(c.price, 0) AS value_usd
-      FROM coins c
-      LEFT JOIN user_balances ub
-        ON ub.user_id = ${userId}::uuid
-       AND LOWER(ub.coin_symbol) = LOWER(c.symbol)
-      ORDER BY c.symbol
-    `) as unknown as AssetRow[];
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ ok: true, id: txid, to_amount: toAmount, fee: feeUSD, assets }),
-    };
   } catch (e: any) {
-    console.error('exchange', e);
-    return { statusCode: 500, body: JSON.stringify({ ok: false, message: String(e?.message || e) }) };
+    console.error('exchange error:', e);
+    return { statusCode: 500, headers, body: JSON.stringify({ ok: false, message: String(e?.message || e) }) };
+  }
+
+  function bad(message: string, status = 400) {
+    return { statusCode: status, headers, body: JSON.stringify({ ok: false, message }) };
   }
 };

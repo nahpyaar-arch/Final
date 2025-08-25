@@ -312,6 +312,16 @@ const normalizeCoin = (c: any) => ({
   market_cap: toNum((c as any).market_cap ?? (c as any).marketCap),
 });
 
+// ⭐ helper: normalize balances to UPPERCASE keys
+function toUpperBalances(rows: Array<{ coin_symbol: string; balance: number }>) {
+  const map: Record<string, number> = {};
+  (rows || []).forEach((r) => {
+    const key = String(r.coin_symbol || '').toUpperCase();
+    map[key] = Number(r.balance ?? 0);
+  });
+  return map;
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
    Helper: call server to get profile+balances+transactions
    ────────────────────────────────────────────────────────────────────────── */
@@ -370,10 +380,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const j = await fetchUserDataFromServer({ email: savedEmail });
 
-        const balMap: Record<string, number> = {};
-        (j.balances || []).forEach((r) => {
-          balMap[r.coin_symbol] = Number(r.balance ?? 0);
-        });
+        const balMap = toUpperBalances(j.balances || []);
 
         const profile = j.profile as Profile;
         setUser({ ...profile, balances: balMap });
@@ -396,38 +403,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [language]);
 
   // Replace your current loadCoins with this:
-const loadCoins = async () => {
-  try {
-    // 1) Try server (Neon) via Netlify Function
-    const res = await fetch('/.netlify/functions/get-coins', { cache: 'no-store' });
-    if (res.ok) {
-      const { coins } = await res.json();
-      setCoins(coins.map(normalizeCoin) as any);
-      return;
-    } else {
-      console.warn('get-coins non-200:', res.status, await res.text());
+  const loadCoins = async () => {
+    try {
+      // 1) Try server (Neon) via Netlify Function
+      const res = await fetch('/.netlify/functions/get-coins', { cache: 'no-store' });
+      if (res.ok) {
+        const { coins } = await res.json();
+        setCoins(coins.map(normalizeCoin) as any);
+        return;
+      } else {
+        console.warn('get-coins non-200:', res.status, await res.text());
+      }
+    } catch (e) {
+      console.warn('get-coins failed, falling back to stub:', e);
     }
-  } catch (e) {
-    console.warn('get-coins failed, falling back to stub:', e);
-  }
 
-  // 2) Fallback to client stub (mock list) if server isn’t available
-  try {
-    const coinsData = await NeonDB.getCoins();
-    setCoins(coinsData.map(normalizeCoin) as any);
-  } catch (error) {
-    console.error('Error loading coins:', error);
-  }
-};
-
+    // 2) Fallback to client stub (mock list) if server isn’t available
+    try {
+      const coinsData = await NeonDB.getCoins();
+      setCoins(coinsData.map(normalizeCoin) as any);
+    } catch (error) {
+      console.error('Error loading coins:', error);
+    }
+  };
 
   const loadUserData = async (userId: string) => {
     try {
       const j = await fetchUserDataFromServer({ id: userId });
-      const balMap: Record<string, number> = {};
-      (j.balances || []).forEach((r) => {
-        balMap[r.coin_symbol] = Number(r.balance ?? 0);
-      });
+      const balMap = toUpperBalances(j.balances || []);
       setUser((prev) => (prev ? { ...prev, balances: balMap } : prev));
       setTransactions((j.transactions || []) as Transaction[]);
     } catch (error) {
@@ -489,8 +492,8 @@ const loadCoins = async () => {
             id: u.id,
             email: u.email,
             name:
-              (u.user_metadata as any)?.name ??
-              (u.user_metadata as any)?.full_name ??
+              (u.user_metadata as any)?.name ?? 
+              (u.user_metadata as any)?.full_name ?? 
               (u.email ? u.email.split('@')[0] : 'user'),
           }),
         });
@@ -501,10 +504,7 @@ const loadCoins = async () => {
       // 3) Pull profile + balances + txs from the server
       const j = await fetchUserDataFromServer({ email });
 
-      const balMap: Record<string, number> = {};
-      (j.balances || []).forEach((r) => {
-        balMap[r.coin_symbol] = Number(r.balance ?? 0);
-      });
+      const balMap = toUpperBalances(j.balances || []);
 
       const profile = j.profile as Profile;
       setUser({ ...profile, balances: balMap });
@@ -568,10 +568,7 @@ const loadCoins = async () => {
       // 4) Pull fresh data from server and set context
       const j = await fetchUserDataFromServer({ email });
 
-      const balMap: Record<string, number> = {};
-      (j.balances || []).forEach((r) => {
-        balMap[r.coin_symbol] = Number(r.balance ?? 0);
-      });
+      const balMap = toUpperBalances(j.balances || []);
 
       const serverProfile = j.profile as Profile;
       setUser({ ...serverProfile, balances: balMap });

@@ -70,8 +70,20 @@ export default function AssetsPage() {
   }, [selectedCoin]);
 
   // quick lookup helpers
-  const priceOf = (sym: string) => Number(coins.find((c) => c.symbol === sym)?.price ?? 0);
-  const balances = user?.balances ?? {};
+  const priceOf = (sym: string) => {
+    const s = String(sym || '').toUpperCase();
+    return Number(coins.find((c) => c.symbol.toUpperCase() === s)?.price ?? 0);
+  };
+
+  // ⭐ Normalize balances to UPPERCASE once here so UI logic is consistent
+  const balances = useMemo(() => {
+    const raw = (user as any)?.balances ?? {};
+    const map: Record<string, number> = {};
+    Object.entries(raw).forEach(([k, v]) => {
+      map[String(k).toUpperCase()] = Number(v ?? 0);
+    });
+    return map;
+  }, [user?.balances]);
 
   // address presets
   const walletAddresses: Record<string, string> = {
@@ -122,7 +134,7 @@ export default function AssetsPage() {
     }
     try {
       await postJson('/.netlify/functions/create-deposit', {
-        user_id: uid, coin_symbol: selectedCoin, amount: amt, details: { network: withdrawNetwork }
+        user_id: uid, coin_symbol: String(selectedCoin).toUpperCase(), amount: amt, details: { network: withdrawNetwork }
       });
       setAmount('');
       await refreshData?.();
@@ -137,19 +149,20 @@ export default function AssetsPage() {
     const uid = user?.id;
     if (!uid) { alert('Please sign in again.'); return; }
 
+    const sym = String(selectedCoin).toUpperCase();
     const amt = Number(amount);
     if (!withdrawAddress?.trim() || !withdrawNetwork || !isFinite(amt) || amt <= 0) {
       alert('Fill in address, network, and a valid amount.');
       return;
     }
 
-    const available = Number(balances[selectedCoin] ?? 0);
+    const available = Number(balances[sym] ?? 0); // ⭐ UPPER lookup
     if (available < amt) { alert('Insufficient balance.'); return; }
 
     try {
       const resp = await postJson<TxResp>('/.netlify/functions/create-withdraw', {
         user_id: uid,
-        coin_symbol: selectedCoin,
+        coin_symbol: sym,
         amount: amt,
         details: { address: withdrawAddress.trim(), network: withdrawNetwork, memo: withdrawMemo || '' },
       });
@@ -170,18 +183,21 @@ export default function AssetsPage() {
   async function handleExchange() {
     const uid = user?.id;
     if (!uid) { alert('Please sign in again.'); return; }
-    if (exchangeFrom === exchangeTo) { alert('Choose two different coins.'); return; }
+
+    const from = String(exchangeFrom).toUpperCase();
+    const to = String(exchangeTo).toUpperCase();
+    if (from === to) { alert('Choose two different coins.'); return; }
 
     const amt = Number(exchangeAmount);
     if (!isFinite(amt) || amt <= 0) { alert('Enter a valid amount.'); return; }
 
-    const have = Number(balances[exchangeFrom] ?? 0);
+    const have = Number(balances[from] ?? 0); // ⭐ UPPER lookup
     if (have < amt) { alert('Insufficient balance.'); return; }
 
     const resp = await postJson<TxResp>('/.netlify/functions/exchange', {
       user_id: uid,
-      from_symbol: exchangeFrom,
-      to_symbol: exchangeTo,
+      from_symbol: from,
+      to_symbol: to,
       amount: amt,
     });
 
@@ -190,7 +206,7 @@ export default function AssetsPage() {
 
     if (!resp?.ok) { alert(resp?.message || 'Exchange failed.'); return; }
     const got = Number(resp?.to_amount ?? 0);
-    alert(`Exchanged ${amt} ${exchangeFrom} → ${got.toFixed(6)} ${exchangeTo}`);
+    alert(`Exchanged ${amt} ${from} → ${got.toFixed(6)} ${to}`);
   }
 
   // Gate (short-circuit the UI if not logged in)
@@ -199,7 +215,6 @@ export default function AssetsPage() {
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center">
           <h2 className="text-2xl font-bold text-white mb-4">Please log in to view assets</h2>
-          <p className="text-gray-400">You need to be logged in to access your portfolio.</p>
         </div>
       </div>
     );
@@ -287,7 +302,8 @@ export default function AssetsPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-700">
                       {coins.map((coin) => {
-                        const bal = Number(balances[coin.symbol] ?? 0);
+                        const sym = coin.symbol.toUpperCase();
+                        const bal = Number(balances[sym] ?? 0);
                         const value = bal * Number(coin.price ?? 0);
                         return (
                           <tr key={coin.symbol} className="hover:bg-gray-700 transition-colors">
@@ -295,7 +311,7 @@ export default function AssetsPage() {
                               <div className="flex items-center space-x-2">
                                 <div>
                                   <div className="text-sm font-medium text-white">{coin.name}</div>
-                                  <div className="text-sm text-gray-400">{coin.symbol}</div>
+                                  <div className="text-sm text-gray-400">{sym}</div>
                                 </div>
                                 {coin.isCustom && <span className="bg-purple-600 text-xs px-2 py-1 rounded-full">NOVA</span>}
                               </div>
@@ -444,7 +460,7 @@ export default function AssetsPage() {
                       ))}
                     </select>
                     <p className="text-sm text-gray-400 mt-1">
-                      Available: {Number(balances[selectedCoin] ?? 0).toFixed(6)} {selectedCoin}
+                      Available: {Number(balances[String(selectedCoin).toUpperCase()] ?? 0).toFixed(6)} {String(selectedCoin).toUpperCase()}
                     </p>
                   </div>
 
@@ -456,7 +472,7 @@ export default function AssetsPage() {
                       className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="">Select Network</option>
-                      {(networks[selectedCoin] ?? []).map((n) => (
+                      {(networks[String(selectedCoin).toUpperCase()] ?? []).map((n) => (
                         <option key={n} value={n}>
                           {n}
                         </option>
@@ -475,7 +491,7 @@ export default function AssetsPage() {
                     />
                   </div>
 
-                  {selectedCoin === 'USDT' && withdrawNetwork === 'TRC20' && (
+                  {String(selectedCoin).toUpperCase() === 'USDT' && withdrawNetwork === 'TRC20' && (
                     <div>
                       <label className="block text-sm font-medium text-gray-300 mb-2">Memo (Optional)</label>
                       <input
@@ -504,7 +520,7 @@ export default function AssetsPage() {
                   <div className="bg-gray-700 rounded-lg p-4">
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-400">Network Fee</span>
-                      <span className="text-white">~0.001 {selectedCoin}</span>
+                      <span className="text-white">~0.001 {String(selectedCoin).toUpperCase()}</span>
                     </div>
                     <div className="flex justify-between text-sm mt-2">
                       <span className="text-gray-400">Estimated Arrival</span>
@@ -557,7 +573,7 @@ export default function AssetsPage() {
                         ))}
                       </select>
                       <p className="text-sm text-gray-400 mt-1">
-                        Available: {Number(balances[exchangeFrom] ?? 0).toFixed(6)} {exchangeFrom}
+                        Available: {Number(balances[String(exchangeFrom).toUpperCase()] ?? 0).toFixed(6)} {String(exchangeFrom).toUpperCase()}
                       </p>
                     </div>
 
@@ -587,7 +603,7 @@ export default function AssetsPage() {
                       step="any"
                       value={exchangeAmount}
                       onChange={(e) => setExchangeAmount(e.target.value)}
-                      placeholder={`Enter ${exchangeFrom} amount`}
+                      placeholder={`Enter ${String(exchangeFrom).toUpperCase()} amount`}
                       className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
@@ -599,7 +615,7 @@ export default function AssetsPage() {
                         <div className="flex justify-between">
                           <span className="text-gray-400">You pay</span>
                           <span className="text-white">
-                            {exchangeAmount} {exchangeFrom}
+                            {exchangeAmount} {String(exchangeFrom).toUpperCase()}
                           </span>
                         </div>
                         <div className="flex justify-between">
@@ -611,7 +627,7 @@ export default function AssetsPage() {
                         <div className="flex justify-between">
                           <span className="text-gray-400">You receive (approx.)</span>
                           <span className="text-white">
-                            {previewToAmount.toFixed(6)} {exchangeTo}
+                            {previewToAmount.toFixed(6)} {String(exchangeTo).toUpperCase()}
                           </span>
                         </div>
                       </div>
@@ -623,12 +639,12 @@ export default function AssetsPage() {
                     disabled={
                       !exchangeAmount ||
                       Number(exchangeAmount) <= 0 ||
-                      Number(exchangeAmount) > Number(balances[exchangeFrom] ?? 0) ||
-                      exchangeFrom === exchangeTo
+                      Number(exchangeAmount) > Number(balances[String(exchangeFrom).toUpperCase()] ?? 0) ||
+                      String(exchangeFrom).toUpperCase() === String(exchangeTo).toUpperCase()
                     }
                     className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-lg font-semibold transition-colors disabled:bg-gray-600 disabled:cursor-not-allowed"
                   >
-                    Exchange {exchangeFrom} for {exchangeTo}
+                    Exchange {String(exchangeFrom).toUpperCase()} for {String(exchangeTo).toUpperCase()}
                   </button>
                 </div>
               </div>
