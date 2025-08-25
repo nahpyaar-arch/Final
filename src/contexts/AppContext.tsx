@@ -472,13 +472,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /* ────────────── Auth: Supabase + server upsert + server read ────────────── */
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
+      // Quick sanity check for env — saves you from silent failures
+      if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+        alert('Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+        return false;
+      }
+
       // 1) Supabase auth
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
       if (error) {
+        alert(`Sign in failed: ${error.message}`);
         console.error('Auth signIn failed:', error);
+        return false;
+      }
+      if (!data?.user) {
+        alert('Sign in failed: no user returned from Supabase.');
         return false;
       }
 
@@ -492,13 +503,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
             id: u.id,
             email: u.email,
             name:
-              (u.user_metadata as any)?.name ?? 
-              (u.user_metadata as any)?.full_name ?? 
+              (u.user_metadata as any)?.name ??
+              (u.user_metadata as any)?.full_name ??
               (u.email ? u.email.split('@')[0] : 'user'),
           }),
         });
       } catch (err) {
         console.error('Profile sync failed:', err);
+        // non-fatal; continue
       }
 
       // 3) Pull profile + balances + txs from the server
@@ -517,7 +529,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await refreshData();
 
       return true;
-    } catch (e) {
+    } catch (e: any) {
+      alert(`Login error: ${e?.message || String(e)}`);
       console.error('Login error:', e);
       return false;
     }
@@ -529,6 +542,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     name: string
   ): Promise<boolean> => {
     try {
+      if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+        alert('Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+        return false;
+      }
+
       // 1) Create auth user in Supabase
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
@@ -540,12 +558,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         alert(`Sign up failed: ${authError.message}`);
         return false;
       }
+      if (!authData?.user) {
+        alert('Sign up failed: no user returned from Supabase.');
+        return false;
+      }
 
       // 2) Create a Supabase profiles row (public table)
       const isAdmin = email === 'admin52980@gmail.com';
       const { profile, error } = await createProfile(email, name, isAdmin);
       console.log('createProfile →', { profile, error });
       if (error) {
+        // Not fatal; still proceed. Show warning so you know to check.
         console.warn('createProfile warning:', error);
       }
 
@@ -555,7 +578,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            id: (authData as any)?.user?.id,
+            id: authData.user.id,
             email,
             name,
             is_admin: isAdmin,
@@ -576,7 +599,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('nova_user_email', serverProfile.email);
 
       return true;
-    } catch (e) {
+    } catch (e: any) {
+      alert(`Registration error: ${e?.message || String(e)}`);
       console.error('Registration error:', e);
       return false;
     }
