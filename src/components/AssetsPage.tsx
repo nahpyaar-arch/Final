@@ -35,30 +35,34 @@ export default function AssetsPage() {
     useState<'overview' | 'deposit' | 'withdraw' | 'exchange'>('overview');
 
   // shared inputs
-  const [selectedCoin, setSelectedCoin] = useState('BTC');
-  const [amount, setAmount] = useState('');
-  const [withdrawAddress, setWithdrawAddress] = useState('');
-  const [withdrawNetwork, setWithdrawNetwork] = useState('');
-  const [withdrawMemo, setWithdrawMemo] = useState('');
+  const [selectedCoin, setSelectedCoin] = useState<string>('BTC');
+  const [amount, setAmount] = useState<string>('');
+  const [withdrawAddress, setWithdrawAddress] = useState<string>('');
+  const [withdrawNetwork, setWithdrawNetwork] = useState<string>('');
+  const [withdrawMemo, setWithdrawMemo] = useState<string>('');
 
   // exchange inputs
-  const [exchangeFrom, setExchangeFrom] = useState('BTC');
-  const [exchangeTo, setExchangeTo] = useState('USDT');
-  const [exchangeAmount, setExchangeAmount] = useState('');
+  const [exchangeFrom, setExchangeFrom] = useState<string>('BTC');
+  const [exchangeTo, setExchangeTo] = useState<string>('USDT');
+  const [exchangeAmount, setExchangeAmount] = useState<string>('');
 
-  const [copiedAddress, setCopiedAddress] = useState('');
+  const [copiedAddress, setCopiedAddress] = useState<string>('');
 
-  // auto-refresh and sanitize when entering action tabs
+  // 🔧 refresh when tab changes (but do not clear here)
   useEffect(() => {
     if (activeTab === 'withdraw' || activeTab === 'deposit' || activeTab === 'exchange') {
       refreshData?.();
     }
-    // clear per-tab inputs to avoid stale data
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // 🔧 clear per-tab inputs ONLY when the tab actually changes
+  useEffect(() => {
     setAmount('');
     setWithdrawAddress('');
     setWithdrawMemo('');
     if (activeTab !== 'exchange') setExchangeAmount('');
-  }, [activeTab, refreshData]);
+  }, [activeTab]);
 
   // when coin changes, reset the network to avoid mismatches
   useEffect(() => {
@@ -395,9 +399,11 @@ export default function AssetsPage() {
                     <label className="block text-sm font-medium text-gray-300 mb-2">Amount</label>
                     <input
                       type="number"
+                      inputMode="decimal"
+                      step="any"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
-                      placeholder="Enter deposit amount"
+                      placeholder="Enter amount"
                       className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
@@ -486,6 +492,8 @@ export default function AssetsPage() {
                     <label className="block text-sm font-medium text-gray-300 mb-2">Amount</label>
                     <input
                       type="number"
+                      inputMode="decimal"
+                      step="any"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
                       placeholder="Enter withdrawal amount"
@@ -575,6 +583,8 @@ export default function AssetsPage() {
                     <label className="block text-sm font-medium text-gray-300 mb-2">Amount to Exchange</label>
                     <input
                       type="number"
+                      inputMode="decimal"
+                      step="any"
                       value={exchangeAmount}
                       onChange={(e) => setExchangeAmount(e.target.value)}
                       placeholder={`Enter ${exchangeFrom} amount`}
