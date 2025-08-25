@@ -1,24 +1,27 @@
 // src/components/AdminPage.tsx
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Settings, Users, DollarSign, TrendingUp, TrendingDown, CheckCircle, XCircle,
+  Settings,
+  Users,
+  DollarSign,
+  TrendingUp,
+  TrendingDown,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { NeonDB } from '../lib/neon';
 
-// NOTE: No duplicate imports, no hooks outside components.
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 type Tab = 'overview' | 'moon' | 'deposits' | 'withdrawals' | 'settings';
-
-type MoonSchedule = {
-  type: 'daily' | 'weekly';
-  percentage: string;
-  direction: 'increase' | 'decrease';
-};
-
+type MoonSchedule = { type: 'daily' | 'weekly'; percentage: string; direction: 'increase' | 'decrease' };
 type PlanRow = { day: string; target_pct: number; note: string };
 
-// Helpers for JST day handling
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
 const fmtJST = (d: Date) =>
   new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Tokyo',
@@ -36,11 +39,10 @@ const addDays = (d: Date, n: number) => {
 const parseYmdToLocal = (ymd: string) => {
   const [y, m, d] = ymd.split('-').map(Number);
   const utc = new Date(Date.UTC(y, m - 1, d));
-  // represent same calendar day in local time (avoids TZ shifts)
   return new Date(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
 };
 
-// small helper for POSTs to functions
+// tiny POST helper
 async function postJson<T = any>(url: string, body: any): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
@@ -55,18 +57,22 @@ async function postJson<T = any>(url: string, body: any): Promise<T> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────────────────────
 export default function AdminPage() {
-  // only pull what we actually use
   const { user, coins, updateCoinPrice, refreshData } = useApp();
 
-  // Works with either shape (DB uses is_admin; some older code used isAdmin)
+  // works with either shape (DB uses is_admin; some older code used isAdmin)
   const isAdminFromUser = !!(user?.is_admin ?? (user as any)?.isAdmin);
 
-  // When the in-memory user is stale, we can override it after checking Neon
+  // allow a server recheck to smooth over client refresh flickers
   const [adminOverride, setAdminOverride] = useState(false);
   const [checkingAdmin, setCheckingAdmin] = useState(false);
 
   const [activeTab, setActiveTab] = useState<Tab>('overview');
+
+  // MOON controls
   const [moonPrice, setMoonPrice] = useState('');
   const [moonSchedule, setMoonSchedule] = useState<MoonSchedule>({
     type: 'daily',
@@ -74,11 +80,13 @@ export default function AdminPage() {
     direction: 'increase',
   });
 
+  // queues
   const [pendingDeposits, setPendingDeposits] = useState<any[]>([]);
   const [pendingWithdrawals, setPendingWithdrawals] = useState<any[]>([]);
 
   const isAllowed = isAdminFromUser || adminOverride;
 
+  // ── admin recheck once if needed ───────────────────────────────────────────
   async function recheckAdmin() {
     const email = user?.email || localStorage.getItem('nova_user_email') || '';
     if (!email) return;
@@ -94,21 +102,16 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    // If the user object isn't marked admin, verify against Neon once
-    if (!isAdminFromUser && !adminOverride) {
-      recheckAdmin();
-    }
+    if (!isAdminFromUser && !adminOverride) recheckAdmin();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdminFromUser]);
 
-  // ---- Data helpers --------------------------------------------------------
+  // ── coin info ──────────────────────────────────────────────────────────────
   const moonCoin = useMemo(() => coins.find((c) => c.symbol === 'MOON'), [coins]);
   const safePrice = Number(moonCoin?.price ?? 0);
-
-  // Accept both legacy `change24h` (camel) and current `change_24h` (snake)
   const change = Number((moonCoin as any)?.change24h ?? (moonCoin as any)?.change_24h ?? 0);
 
-  // Load queues via Netlify Functions (no DB in the browser)
+  // ── queues load ────────────────────────────────────────────────────────────
   async function loadQueues() {
     if (!isAllowed) return;
     try {
@@ -130,9 +133,9 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAllowed]);
 
-  // ---- MOON plan state & helpers (Netlify Functions) -----------------------
-  const [planDate, setPlanDate] = useState<string>('');     // YYYY-MM-DD
-  const [planPct, setPlanPct] = useState<string>('');       // e.g. "20"
+  // ── MOON daily planner (via Netlify Functions) ────────────────────────────
+  const [planDate, setPlanDate] = useState<string>(''); // YYYY-MM-DD
+  const [planPct, setPlanPct] = useState<string>(''); // "20"
   const [planNote, setPlanNote] = useState<string>('');
   const [plans, setPlans] = useState<PlanRow[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(false);
@@ -140,8 +143,7 @@ export default function AdminPage() {
   async function loadPlansWindow(anchorDate?: string) {
     const anchor = anchorDate ? parseYmdToLocal(anchorDate) : new Date();
     const fromStr = fmtJST(addDays(anchor, -10));
-    const toStr   = fmtJST(addDays(anchor, +10));
-
+    const toStr = fmtJST(addDays(anchor, +10));
     try {
       setLoadingPlans(true);
       const res = await fetch(`/.netlify/functions/get-moon-plans?from=${fromStr}&to=${toStr}`);
@@ -165,12 +167,14 @@ export default function AdminPage() {
     if (!planDate || planPct === '') return;
     const pct = Number(planPct);
     if (!isFinite(pct)) {
-      alert('Enter a valid percentage (e.g. 5, 20, -3)');
+      alert('Enter a valid percentage (e.g., 5, 20, -3)');
       return;
     }
     try {
       await postJson('/.netlify/functions/upsert-moon-plan', {
-        day: planDate, target_pct: pct, note: planNote,
+        day: planDate,
+        target_pct: pct,
+        note: planNote,
       });
       await loadPlansWindow(planDate);
       setPlanPct('');
@@ -193,7 +197,7 @@ export default function AdminPage() {
     }
   }
 
-  // ---- Actions -------------------------------------------------------------
+  // ── Actions ────────────────────────────────────────────────────────────────
   const handleMoonPriceUpdate = async () => {
     if (!moonPrice) return;
     await updateCoinPrice('MOON', parseFloat(moonPrice));
@@ -203,12 +207,10 @@ export default function AdminPage() {
 
   const handleScheduleMoonPrice = () => {
     if (!moonSchedule.percentage) return;
-    alert(
-      `MOON price scheduled to ${moonSchedule.direction} by ${moonSchedule.percentage}% ${moonSchedule.type}`
-    );
+    alert(`MOON price scheduled to ${moonSchedule.direction} by ${moonSchedule.percentage}% ${moonSchedule.type}`);
   };
 
-  // Approve/Reject DEPOSIT via functions
+  // Approve/Reject DEPOSIT
   const handleDepositAction = async (transactionId: string, action: 'approve' | 'reject') => {
     try {
       await postJson(`/.netlify/functions/${action}-deposit`, { id: transactionId });
@@ -220,30 +222,26 @@ export default function AdminPage() {
     }
   };
 
-  // Approve/Reject WITHDRAWAL via functions (make sure functions exist)
-  // Approve/Reject WITHDRAWAL via functions (admin)
-const handleWithdrawalAction = async (
-  transactionId: string,
-  action: 'approve' | 'reject'
-) => {
-  try {
-    await postJson(`/.netlify/functions/${action}-withdraw`, { id: transactionId });
-    await loadQueues();   // refresh the pending lists
-    await refreshData();  // refresh any user/portfolio data
-  } catch (err) {
-    console.error('Failed to update withdrawal:', err);
-    alert('Failed to update withdrawal. See console for details.');
-  }
-};
+  // Approve/Reject WITHDRAWAL
+  const handleWithdrawalAction = async (transactionId: string, action: 'approve' | 'reject') => {
+    try {
+      await postJson(`/.netlify/functions/${action}-withdraw`, { id: transactionId });
+      await loadQueues();
+      await refreshData();
+    } catch (err) {
+      console.error('Failed to update withdrawal:', err);
+      alert('Failed to update withdrawal. See console for details.');
+    }
+  };
 
-
-
-  // ---- Gate ---------------------------------------------------------------
+  // ── Gate ──────────────────────────────────────────────────────────────────
   if (!isAllowed) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center">
           <h2 className="text-2xl font-bold text-white mb-3">Access Denied</h2>
+        </div>
+        <div className="text-center mt-4">
           <p className="text-gray-400 mb-6">You need administrator privileges to access this page.</p>
           <button
             onClick={recheckAdmin}
@@ -257,13 +255,14 @@ const handleWithdrawalAction = async (
     );
   }
 
-  // ---- UI -----------------------------------------------------------------
+  // ── UI ─────────────────────────────────────────────────────────────────────
   const pendingDeps = pendingDeposits;
   const pendingWds = pendingWithdrawals;
 
   return (
     <div className="min-h-screen bg-gray-900 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-white mb-4">Admin Panel</h1>
           <p className="text-gray-400">Manage Nova platform operations and settings</p>
@@ -285,9 +284,7 @@ const handleWithdrawalAction = async (
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as Tab)}
                   className={`flex items-center space-x-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    activeTab === tab.id
-                      ? 'bg-purple-600 text-white'
-                      : 'text-gray-300 hover:text-white hover:bg-gray-700'
+                    activeTab === tab.id ? 'bg-purple-600 text-white' : 'text-gray-300 hover:text-white hover:bg-gray-700'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
@@ -346,7 +343,7 @@ const handleWithdrawalAction = async (
         {/* MOON Control */}
         {activeTab === 'moon' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Manual price card */}
+            {/* Manual price */}
             <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
               <h2 className="text-xl font-bold text-white mb-6">Manual MOON Price Control</h2>
               <div className="space-y-4">
@@ -354,7 +351,11 @@ const handleWithdrawalAction = async (
                   <label className="block text-sm font-medium text-gray-300 mb-2">Current Price</label>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-2xl font-bold text-white">${safePrice.toFixed(6)}</p>
-                    <div className={`flex items-center space-x-1 mt-2 ${change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    <div
+                      className={`flex items-center space-x-1 mt-2 ${
+                        change >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}
+                    >
                       {change >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
                       <span className="text-sm font-semibold">{change.toFixed(2)}%</span>
                     </div>
@@ -383,7 +384,7 @@ const handleWithdrawalAction = async (
               </div>
             </div>
 
-            {/* Quick scheduler demo (kept) */}
+            {/* Scheduler (placeholder UX) */}
             <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
               <h2 className="text-xl font-bold text-white mb-6">Schedule Price Changes</h2>
               <div className="space-y-4">
@@ -405,7 +406,9 @@ const handleWithdrawalAction = async (
                     <button
                       onClick={() => setMoonSchedule({ ...moonSchedule, direction: 'increase' })}
                       className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
-                        moonSchedule.direction === 'increase' ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        moonSchedule.direction === 'increase'
+                          ? 'bg-green-600 text-white'
+                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                       }`}
                     >
                       <TrendingUp className="w-4 h-4 inline mr-1" />
@@ -414,7 +417,9 @@ const handleWithdrawalAction = async (
                     <button
                       onClick={() => setMoonSchedule({ ...moonSchedule, direction: 'decrease' })}
                       className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
-                        moonSchedule.direction === 'decrease' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        moonSchedule.direction === 'decrease'
+                          ? 'bg-red-600 text-white'
+                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                       }`}
                     >
                       <TrendingDown className="w-4 h-4 inline mr-1" />
@@ -445,7 +450,7 @@ const handleWithdrawalAction = async (
               </div>
             </div>
 
-            {/* NEW: MOON Daily Target Planner (wired to Netlify Functions) */}
+            {/* MOON Daily Target Planner */}
             <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 lg:col-span-2">
               <h2 className="text-xl font-bold text-white mb-6">MOON Daily Target Planner</h2>
 
@@ -514,26 +519,35 @@ const handleWithdrawalAction = async (
                     </thead>
                     <tbody className="divide-y divide-gray-700">
                       {loadingPlans && (
-                        <tr><td colSpan={4} className="px-4 py-3 text-gray-400">Loading…</td></tr>
-                      )}
-                      {!loadingPlans && plans.length === 0 && (
-                        <tr><td colSpan={4} className="px-4 py-3 text-gray-400">No plans in range</td></tr>
-                      )}
-                      {!loadingPlans && plans.map((p) => (
-                        <tr key={p.day} className="hover:bg-gray-700">
-                          <td className="px-4 py-2 text-white">{p.day}</td>
-                          <td className="px-4 py-2 text-white">{Number(p.target_pct).toFixed(2)}%</td>
-                          <td className="px-4 py-2 text-gray-300">{p.note || '—'}</td>
-                          <td className="px-4 py-2">
-                            <button
-                              onClick={() => removePlan(p.day)}
-                              className="px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs"
-                            >
-                              Delete
-                            </button>
+                        <tr>
+                          <td colSpan={4} className="px-4 py-3 text-gray-400">
+                            Loading…
                           </td>
                         </tr>
-                      ))}
+                      )}
+                      {!loadingPlans && plans.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-3 text-gray-400">
+                            No plans in range
+                          </td>
+                        </tr>
+                      )}
+                      {!loadingPlans &&
+                        plans.map((p) => (
+                          <tr key={p.day} className="hover:bg-gray-700">
+                            <td className="px-4 py-2 text-white">{p.day}</td>
+                            <td className="px-4 py-2 text-white">{Number(p.target_pct).toFixed(2)}%</td>
+                            <td className="px-4 py-2 text-gray-300">{p.note || '—'}</td>
+                            <td className="px-4 py-2">
+                              <button
+                                onClick={() => removePlan(p.day)}
+                                className="px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
                     </tbody>
                   </table>
                 </div>
@@ -672,10 +686,22 @@ const handleWithdrawalAction = async (
             <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
               <h2 className="text-xl font-bold text-white mb-6">Platform Status</h2>
               <div className="space-y-3 text-sm">
-                <div className="flex items-center justify-between"><span className="text-gray-300">Trading</span><span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs">Active</span></div>
-                <div className="flex items-center justify-between"><span className="text-gray-300">Deposits</span><span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs">Active</span></div>
-                <div className="flex items-center justify-between"><span className="text-gray-300">Withdrawals</span><span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs">Active</span></div>
-                <div className="flex items-center justify-between"><span className="text-gray-300">MOON Trading</span><span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs">Active</span></div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-300">Trading</span>
+                  <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs">Active</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-300">Deposits</span>
+                  <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs">Active</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-300">Withdrawals</span>
+                  <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs">Active</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-300">MOON Trading</span>
+                  <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs">Active</span>
+                </div>
               </div>
             </div>
           </div>
