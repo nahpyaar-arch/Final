@@ -1,42 +1,60 @@
+// netlify/functions/get-user-data.ts
 import type { Handler } from '@netlify/functions';
 import { neon } from '@neondatabase/serverless';
 
-const dbUrl = process.env.DATABASE_URL || '';
-const sql = dbUrl ? neon(dbUrl) : null;
+const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
 
 export const handler: Handler = async (event) => {
-  if (event.httpMethod !== 'GET') {
-    return { statusCode: 405, headers: { 'content-type': 'text/plain' }, body: 'GET only' };
-  }
   try {
-    if (!sql) throw new Error('DB not configured');
+    const dbUrl =
+      process.env.DATABASE_URL ||
+      process.env.NEON_DATABASE_URL ||
+      process.env.VITE_DATABASE_URL;
+    if (!dbUrl) return resp(500, { ok: false, error: 'DATABASE_URL not set' });
 
-    const q = event.queryStringParameters || {};
-    const email = q.email;
-    const id = q.id;
+    const sql = neon(dbUrl);
 
-    if (!email && !id) return { statusCode: 400, body: 'Provide ?email= or ?id=' };
+    // ✅ use rawQuery (string) to avoid TS clash with EventQueryStringParameters
+    const qs = new URLSearchParams(event.rawQuery || '');
+    const id = qs.get('id') || '';
+    const email = qs.get('email') || '';
+    if (!id && !email) return resp(400, { ok: false, error: 'Provide id or email' });
 
-    const profRows = id
-      ? await (sql as any)`SELECT * FROM profiles WHERE id = ${id} LIMIT 1`
-      : await (sql as any)`SELECT * FROM profiles WHERE email = ${email} LIMIT 1`;
-    const profile = profRows[0];
-    if (!profile) return { statusCode: 404, body: 'Profile not found' };
+    // profile
+    const profRows = (await (id
+      ? sql`SELECT id, email, name, is_admin, language, created_at, updated_at FROM profiles WHERE id = ${id} LIMIT 1`
+      : sql`SELECT id, email, name, is_admin, language, created_at, updated_at FROM profiles WHERE email = ${email} LIMIT 1`
+    )) as unknown as Array<any>;
 
-    const balances = await (sql as any)`
-      SELECT coin_symbol, balance::float AS balance FROM user_balances WHERE user_id = ${profile.id}
-    `;
-    const transactions = await (sql as any)`
-      SELECT * FROM transactions WHERE user_id = ${profile.id} ORDER BY created_at DESC LIMIT 200
-    `;
+    const profile = profRows?.[0];
+    if (!profile) return resp(404, { ok: false, error: 'User not found' });
 
-    return {
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok: true, profile, balances, transactions }),
-    };
-  } catch (e) {
-    console.error('get-user-data error:', e);
-    return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(e) }) };
+    // balances (UPPERCASE symbols, numeric)
+    const balRows = (await sql`
+      SELECT UPPER(coin_symbol) AS coin_symbol, balance::float AS balance
+      FROM user_balances
+      WHERE user_id = ${profile.id}
+      ORDER BY coin_symbol
+    `) as unknown as Array<{ coin_symbol: string; balance: number }>;
+
+    // recent transactions (optional)
+    const txRows = (await sql`
+      SELECT id, user_id, type, status, coin_symbol, from_symbol, to_symbol,
+             amount::float, to_amount::float, fee::float, details,
+             created_at, updated_at
+      FROM transactions
+      WHERE user_id = ${profile.id}
+      ORDER BY created_at DESC
+      LIMIT 200
+    `) as unknown as Array<any>;
+
+    return resp(200, { ok: true, profile, balances: balRows, transactions: txRows });
+  } catch (e: any) {
+    console.error('get-user-data error', e);
+    return resp(500, { ok: false, error: String(e?.message || e) });
   }
 };
+
+function resp(statusCode: number, body: any) {
+  return { statusCode, headers, body: JSON.stringify(body) };
+}
