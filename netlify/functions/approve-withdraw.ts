@@ -3,68 +3,75 @@ import { neon } from '@neondatabase/serverless';
 
 export const handler: Handler = async (event) => {
   try {
-    if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Use POST' };
+    if (event.httpMethod !== 'POST') return { statusCode: 405, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: false, message: 'Use POST' }) };
     const dbUrl = process.env.DATABASE_URL || process.env.VITE_DATABASE_URL;
-    if (!dbUrl) return { statusCode: 500, body: 'DATABASE_URL not set' };
+    if (!dbUrl) return { statusCode: 500, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: false, message: 'DATABASE_URL not set' }) };
     const sql = neon(dbUrl);
 
     const { id } = JSON.parse(event.body || '{}');
-    if (!id) return { statusCode: 400, body: 'Missing id' };
+    if (!id) return { statusCode: 400, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: false, message: 'Missing id' }) };
 
     const now = new Date().toISOString();
 
-    const res = await sql`
-      WITH tx AS (
-        SELECT user_id, coin_symbol, amount
-          FROM transactions
-         WHERE id = ${id}::uuid
-           AND type = 'withdraw'
-           AND status = 'pending'
-         LIMIT 1
-      ),
-      cur AS (
-        SELECT ub.user_id, ub.coin_symbol, ub.balance::float AS bal, ub.locked_balance::float AS lck, t.amount::float AS amt
-          FROM user_balances ub
-          JOIN tx t ON ub.user_id = t.user_id
-                  AND LOWER(ub.coin_symbol) = LOWER(t.coin_symbol)
-         LIMIT 1
-      ),
-      // compute how much to take from locked and how much from balance
-      compute AS (
-        SELECT
-          c.user_id, c.coin_symbol,
-          LEAST(c.lck, c.amt)         AS take_locked,
-          GREATEST(c.amt - c.lck, 0)  AS take_balance,
-          (c.bal + c.lck) >= c.amt    AS enough
-        FROM cur c
-      ),
-      apply AS (
-        UPDATE user_balances ub
-           SET locked_balance = ub.locked_balance - comp.take_locked,
-               balance        = ub.balance        - comp.take_balance,
-               updated_at     = ${now}
-          FROM compute comp
-         WHERE ub.user_id = comp.user_id
-           AND LOWER(ub.coin_symbol) = LOWER(comp.coin_symbol)
-           AND comp.enough = TRUE
-         RETURNING 1
-      ),
-      done AS (
-        UPDATE transactions
-           SET status = 'completed', updated_at = ${now}
-         WHERE id = ${id}::uuid
-           AND EXISTS (SELECT 1 FROM apply)
-         RETURNING 1
-      )
-      SELECT (SELECT COUNT(*) FROM done) AS ok;
+    // Get transaction details first
+    const txRows = await sql`
+      SELECT user_id, coin_symbol, amount
+      FROM transactions
+      WHERE id = ${id}::uuid
+        AND type = 'withdraw'
+        AND status = 'pending'
+      LIMIT 1
     `;
 
-    const ok = Number((res as any)[0]?.ok || 0);
-    if (!ok) return { statusCode: 400, body: 'Insufficient funds or not pending' };
+    if (txRows.length === 0) {
+      return { statusCode: 404, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: false, message: 'Transaction not found or not pending' }) };
+    }
 
-    return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+    const tx = txRows[0];
+    const coinSymbol = String(tx.coin_symbol).toUpperCase();
+    const amount = Number(tx.amount);
+
+    // Get current balance
+    const balanceRows = await sql`
+      SELECT balance, locked_balance
+      FROM user_balances
+      WHERE user_id = ${tx.user_id} AND coin_symbol = ${coinSymbol}
+      LIMIT 1
+    `;
+
+    const currentBalance = balanceRows[0] || { balance: 0, locked_balance: 0 };
+    const lockedBalance = Number(currentBalance.locked_balance);
+    const availableBalance = Number(currentBalance.balance);
+
+    // Deduct from locked balance first, then from available balance if needed
+    const deductFromLocked = Math.min(lockedBalance, amount);
+    const deductFromAvailable = amount - deductFromLocked;
+
+    if (availableBalance < deductFromAvailable) {
+      return { statusCode: 400, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: false, message: 'Insufficient balance' }) };
+    }
+
+    // Update balances
+    await sql`
+      UPDATE user_balances
+      SET 
+        locked_balance = locked_balance - ${deductFromLocked},
+        balance = balance - ${deductFromAvailable},
+        updated_at = ${now}
+      WHERE user_id = ${tx.user_id} AND coin_symbol = ${coinSymbol}
+    `;
+
+    // Update transaction status
+    const res = await sql`
+      UPDATE transactions
+      SET status = 'completed', updated_at = ${now}
+      WHERE id = ${id}::uuid
+      RETURNING 1
+    `;
+
+    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: true }) };
   } catch (e: any) {
     console.error('approve-withdraw', e);
-    return { statusCode: 500, body: String(e?.message || e) };
+    return { statusCode: 500, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: false, message: String(e?.message || e) }) };
   }
 };

@@ -660,7 +660,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await loadCoins();
     if (user) {
       await refreshProfileFromDB();
-      await loadUserData(user.id);
+      await refreshUserData(user.id);
     }
   };
 
