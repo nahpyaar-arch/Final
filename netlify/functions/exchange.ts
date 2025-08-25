@@ -58,6 +58,7 @@ export const handler: Handler = async (event) => {
     if (!pFrom || !pTo) return bad('price unavailable for one or more symbols', 400);
 
     // ── begin atomic exchange
+    await sql`BEGIN`;
     try {
       // ensure rows exist
       await sql`
@@ -71,16 +72,17 @@ export const handler: Handler = async (event) => {
         ON CONFLICT (user_id, coin_symbol) DO NOTHING
       `;
 
-      // Get current balance for FROM coin
+      // lock FROM balance row (again: cast result, no sql<…>)
       const fromBalRows = (await sql`
         SELECT balance::float AS balance
         FROM user_balances
         WHERE user_id = ${user_id} AND UPPER(coin_symbol) = ${FROM}
-        LIMIT 1
+        FOR UPDATE
       `) as unknown as Array<{ balance: number }>;
 
       const have = Number(fromBalRows?.[0]?.balance ?? 0);
       if (have < amount) {
+        await sql`ROLLBACK`;
         return {
           statusCode: 400,
           headers,
@@ -96,20 +98,17 @@ export const handler: Handler = async (event) => {
       const feeUSD = valueUSD * 0.001; // 0.1%
       const toAmount = (valueUSD - feeUSD) / pTo;
 
-      // Update balances atomically
+      // debit FROM
       await sql`
         UPDATE user_balances
         SET balance = balance - ${amount}, updated_at = NOW()
         WHERE user_id = ${user_id} AND UPPER(coin_symbol) = ${FROM}
       `;
 
+      // credit TO
       await sql`
-        INSERT INTO user_balances (id, user_id, coin_symbol, balance, locked_balance, created_at, updated_at)
-        VALUES (${randomUUID()}, ${user_id}, ${TO}, ${toAmount}, 0, NOW(), NOW())
-        ON CONFLICT (user_id, coin_symbol)
-        DO UPDATE SET
-          balance = user_balances.balance + ${toAmount},
-          updated_at = NOW()
+        UPDATE user_balances
+        SET balance = balance + ${toAmount}, updated_at = NOW()
         WHERE user_id = ${user_id} AND UPPER(coin_symbol) = ${TO}
       `;
 
@@ -122,12 +121,14 @@ export const handler: Handler = async (event) => {
           (${txId}, ${user_id}, 'exchange', ${FROM}, ${TO}, ${amount}, ${toAmount}, ${feeUSD}, 'completed', NOW(), NOW())
       `;
 
+      await sql`COMMIT`;
       return {
         statusCode: 200,
         headers,
         body: JSON.stringify({ ok: true, id: txId, to_amount: toAmount, fee: feeUSD }),
       };
     } catch (err) {
+      await sql`ROLLBACK`;
       throw err;
     }
   } catch (e: any) {
