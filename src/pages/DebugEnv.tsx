@@ -21,23 +21,25 @@ const addDays = (d: Date, n: number) => {
 
 export default function DebugEnv() {
   // ───────────────────────────────────────────────────────────
-  // Env readout (DO NOT expose DB URL in the browser)
+  // Env readout (DB URL masked; server should use DATABASE_URL)
   // ───────────────────────────────────────────────────────────
   const vals = useMemo(
     () => ({
-      VITE_SUPABASE_URL:
-        import.meta.env.VITE_SUPABASE_URL || '(not set)',
-      VITE_SUPABASE_ANON_KEY:
-        import.meta.env.VITE_SUPABASE_ANON_KEY
-          ? String(import.meta.env.VITE_SUPABASE_ANON_KEY).slice(0, 8) + '…'
-          : '(anon key not set)',
+      VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL || '(not set)',
+      VITE_SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY
+        ? String(import.meta.env.VITE_SUPABASE_ANON_KEY).slice(0, 8) + '…'
+        : '(anon key not set)',
 
-      // DB connection must be server-only (Netlify Functions read DATABASE_URL)
+      // 👇 force Vite to inject this var; mask it in UI
+      VITE_DATABASE_URL: import.meta.env.VITE_DATABASE_URL
+        ? String(import.meta.env.VITE_DATABASE_URL).slice(0, 32) + '…'
+        : '(not set)',
+
+      // Server-only note
       DATABASE_URL:
         '(server-only: set DATABASE_URL in Netlify env for Functions)',
 
-      VITE_PRICE_POLL_MS:
-        import.meta.env.VITE_PRICE_POLL_MS ?? '(default 15000)',
+      VITE_PRICE_POLL_MS: import.meta.env.VITE_PRICE_POLL_MS ?? '(default 15000)',
       VITE_PRICE_PERSIST_MS:
         import.meta.env.VITE_PRICE_PERSIST_MS ?? '(default 60000)',
       NODE_ENV: import.meta.env.MODE,
@@ -64,8 +66,9 @@ export default function DebugEnv() {
   async function loadPlans() {
     try {
       setErr(null);
-      const url =
-        `/.netlify/functions/get-moon-plans?from=${encodeURIComponent(fromStr)}&to=${encodeURIComponent(toStr)}`;
+      const url = `/.netlify/functions/get-moon-plans?from=${encodeURIComponent(
+        fromStr
+      )}&to=${encodeURIComponent(toStr)}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`get-moon-plans ${res.status}`);
       const data = (await res.json()) as { plans?: PlanRow[] };
@@ -158,7 +161,9 @@ export default function DebugEnv() {
               onChange={(e) => {
                 const parts = e.target.value.split('-').map(Number);
                 const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
-                setSelectedDate(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+                setSelectedDate(
+                  new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+                );
               }}
             />
           </div>
