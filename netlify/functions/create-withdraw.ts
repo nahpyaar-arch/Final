@@ -9,7 +9,7 @@ const headers = {
 
 const toNum = (v: any) => (typeof v === 'string' ? Number(v) : v);
 
-// Read from both POST body and query; accept common aliases
+// Read from POST body and/or query; accept common aliases
 function getInput(event: any) {
   const qs = new URLSearchParams(event.rawQuery || '');
   let body: any = {};
@@ -58,10 +58,10 @@ export const handler: Handler = async (event) => {
 
     const sql = neon(dbUrl);
 
-    // 1) balance check
+    // 1) balance check — use your real table name: balances
     const balRows = await sql`
       SELECT balance
-      FROM assets
+      FROM balances
       WHERE user_id = ${user_id} AND coin_symbol = ${coin_symbol}
     `;
     const balance = Number(balRows[0]?.balance ?? 0);
@@ -69,27 +69,29 @@ export const handler: Handler = async (event) => {
       return { statusCode:400, headers, body: JSON.stringify({ ok:false, error:'Insufficient balance' }) };
     }
 
-    // 2) insert pending withdrawal and return id
-    // If your transactions table doesn't have a "network" column,
-    // replace this INSERT with the commented version below.
-    const rows = await sql`
-      INSERT INTO transactions
-        (user_id, type, coin_symbol, amount, status, to_address, network)
-      VALUES
-        (${user_id}, 'withdraw', ${coin_symbol}, ${amount}, 'pending', ${address}, ${network})
-      RETURNING id
-    `;
+    // 2) insert pending withdraw; try with network, fall back if column absent
+    let id: string | null = null;
+    try {
+      const rows = await sql`
+        INSERT INTO transactions
+          (user_id, type, coin_symbol, amount, status, to_address, network)
+        VALUES
+          (${user_id}, 'withdraw', ${coin_symbol}, ${amount}, 'pending', ${address}, ${network})
+        RETURNING id
+      `;
+      id = rows[0]?.id ?? null;
+    } catch {
+      const rows = await sql`
+        INSERT INTO transactions
+          (user_id, type, coin_symbol, amount, status, to_address)
+        VALUES
+          (${user_id}, 'withdraw', ${coin_symbol}, ${amount}, 'pending', ${address})
+        RETURNING id
+      `;
+      id = rows[0]?.id ?? null;
+    }
 
-    // ── If "network" column doesn't exist, use:
-    // const rows = await sql`
-    //   INSERT INTO transactions
-    //     (user_id, type, coin_symbol, amount, status, to_address)
-    //   VALUES
-    //     (${user_id}, 'withdraw', ${coin_symbol}, ${amount}, 'pending', ${address})
-    //   RETURNING id
-    // `;
-
-    return { statusCode:200, headers, body: JSON.stringify({ ok:true, id: rows[0]?.id }) };
+    return { statusCode:200, headers, body: JSON.stringify({ ok:true, id }) };
   } catch (e: any) {
     return { statusCode:500, headers, body: JSON.stringify({ ok:false, error: e?.message || 'Server error' }) };
   }
