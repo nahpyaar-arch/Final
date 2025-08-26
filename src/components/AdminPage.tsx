@@ -38,19 +38,21 @@ const parseYmdToUTCDate = (ymd: string) => {
   return new Date(Date.UTC(y, (m || 1) - 1, dd || 1));
 };
 
-// tiny POST helper
+// tiny POST helper (now returns server error messages)
 async function postJson<T = any>(url: string, body: any): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+  let data: any = null;
   try {
-    return (await res.json()) as T;
+    data = await res.json();
   } catch {
-    return {} as T;
+    /* no-op */
   }
+  if (!res.ok) throw new Error(data?.error || `${url} -> ${res.status}`);
+  return (data ?? {}) as T;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,7 +170,7 @@ export default function AdminPage() {
     }
     try {
       await postJson('/.netlify/functions/upsert-moon-plan', {
-        day: planDate,          // YYYY-MM-DD (UTC day string)
+        day: planDate, // YYYY-MM-DD (UTC day string)
         target_pct: pct,
         note: planNote,
       });
@@ -206,27 +208,29 @@ export default function AdminPage() {
     alert(`MOON price scheduled to ${moonSchedule.direction} by ${moonSchedule.percentage}% ${moonSchedule.type}`);
   };
 
-  // Approve/Reject DEPOSIT
+  // Approve/Reject DEPOSIT  ✅ send { tx_id }
   const handleDepositAction = async (transactionId: string, action: 'approve' | 'reject') => {
     try {
-      await postJson(`/.netlify/functions/${action}-deposit`, { id: transactionId });
+      await postJson(`/.netlify/functions/${action}-deposit`, { tx_id: transactionId });
       await loadQueues();
       await refreshData();
-    } catch (e) {
+      alert('Deposit updated ✔');
+    } catch (e: any) {
       console.error('Failed to update deposit:', e);
-      alert('Failed to update deposit. See console for details.');
+      alert(`Failed to update deposit: ${e.message || e}`);
     }
   };
 
-  // Approve/Reject WITHDRAWAL
+  // Approve/Reject WITHDRAWAL ✅ send { tx_id }
   const handleWithdrawalAction = async (transactionId: string, action: 'approve' | 'reject') => {
     try {
-      await postJson(`/.netlify/functions/${action}-withdraw`, { id: transactionId });
+      await postJson(`/.netlify/functions/${action}-withdraw`, { tx_id: transactionId });
       await loadQueues();
       await refreshData();
-    } catch (err) {
+      alert('Withdrawal updated ✔');
+    } catch (err: any) {
       console.error('Failed to update withdrawal:', err);
-      alert('Failed to update withdrawal. See console for details.');
+      alert(`Failed to update withdrawal: ${err.message || err}`);
     }
   };
 
@@ -432,7 +436,7 @@ export default function AdminPage() {
                     value={moonSchedule.percentage}
                     onChange={(e) => setMoonSchedule({ ...moonSchedule, percentage: e.target.value })}
                     placeholder="Enter percentage (e.g., 5.5)"
-                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
                   />
                 </div>
 
