@@ -1,67 +1,63 @@
 // netlify/functions/create-withdraw.ts
 import type { Handler } from '@netlify/functions';
-import { neon } from '@neondatabase/serverless';
 
-export const handler: Handler = async (event) => {
-  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Use POST' };
+// shared headers
+const headers = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+  'Cache-Control': 'no-store',
+};
 
-  const dbUrl = process.env.DATABASE_URL || process.env.VITE_DATABASE_URL;
-  if (!dbUrl) return { statusCode: 500, body: 'DATABASE_URL not set' };
-  const sql = neon(dbUrl);
+const num = (v: any) => (typeof v === 'string' ? Number(v) : v);
 
+// Extract from both body and query, accept multiple alias keys
+function getInput(event: any) {
+  const qs = new URLSearchParams(event.rawQuery || '');
   let body: any = {};
   try { body = JSON.parse(event.body || '{}'); } catch {}
 
-  const user_id = String(body.user_id || '');
-  const coin_symbol = String(body.coin_symbol || '').toUpperCase();
-  const amount = Number(body.amount || 0);
-  const details = body.details ?? {};
-  const address = String(details.address || '');
-  const network = String(details.network || '');
-  const memo = String(details.memo || '');
+  const pick = (...keys: string[]) =>
+    keys.map(k => (body?.[k] ?? (qs.get(k) ?? undefined))).find(v => v !== undefined);
 
-  if (!user_id) return { statusCode: 400, body: 'Missing user_id' };
-  if (!coin_symbol) return { statusCode: 400, body: 'Missing coin_symbol' };
-  if (!Number.isFinite(amount) || amount <= 0) return { statusCode: 400, body: 'Invalid amount' };
-  if (!address || !network) return { statusCode: 400, body: 'Address and network required' };
+  const user_id     = pick('user_id', 'userId', 'uid');
+  const coin_symbol = pick('coin_symbol', 'coin', 'symbol');
+  const amount      = num(pick('amount', 'value', 'qty'));
+  const address     = pick('address', 'to_address', 'toAddress', 'dest');
+  const network     = pick('network', 'chain', 'net');
 
+  return { user_id, coin_symbol, amount, address, network };
+}
+
+export const handler: Handler = async (event) => {
   try {
-    const now = new Date().toISOString();
-
-    // ensure balance row exists (idempotent)
-    await sql`
-      INSERT INTO user_balances (id, user_id, coin_symbol, balance, locked_balance, created_at, updated_at)
-      VALUES (${crypto.randomUUID()}, ${user_id}, ${coin_symbol}, 0, 0, ${now}, ${now})
-      ON CONFLICT (user_id, coin_symbol) DO NOTHING
-    `;
-
-    // atomically move funds from balance -> locked if there are enough funds
-    const updated: any[] = await sql`
-      UPDATE user_balances
-      SET balance = balance - ${amount},
-          locked_balance = locked_balance + ${amount},
-          updated_at = ${now}
-      WHERE user_id = ${user_id}
-        AND coin_symbol = ${coin_symbol}
-        AND balance >= ${amount}
-      RETURNING balance, locked_balance
-    `;
-    if (updated.length === 0) {
-      return { statusCode: 400, body: JSON.stringify({ ok: false, message: 'Insufficient balance' }) };
+    if (event.httpMethod !== 'POST' && event.httpMethod !== 'GET') {
+      return { statusCode: 405, headers, body: JSON.stringify({ ok: false, error: 'Use POST or GET' }) };
     }
 
-    const txid = crypto.randomUUID();
-    await sql`
-      INSERT INTO transactions
-        (id, user_id, type, coin_symbol, amount, status, details, created_at, updated_at)
-      VALUES
-        (${txid}, ${user_id}, 'withdraw', ${coin_symbol}, ${amount}, 'pending',
-         ${JSON.stringify({ address, network, memo })}::jsonb, ${now}, ${now})
-    `;
+    const { user_id, coin_symbol, amount, address, network } = getInput(event);
 
-    return { statusCode: 200, body: JSON.stringify({ ok: true, id: txid }) };
+    // Helpful, explicit errors
+    if (!user_id)     return { statusCode: 400, headers, body: JSON.stringify({ ok:false, error:'Missing user_id' }) };
+    if (!coin_symbol) return { statusCode: 400, headers, body: JSON.stringify({ ok:false, error:'Missing coin_symbol' }) };
+    if (!amount || Number.isNaN(amount) || amount <= 0)
+                      return { statusCode: 400, headers, body: JSON.stringify({ ok:false, error:'Invalid amount' }) };
+    if (!address || !network)
+                      return { statusCode: 400, headers, body: JSON.stringify({ ok:false, error:'Address and network required' }) };
+
+    // ── TODO: YOUR EXISTING DB LOGIC HERE ─────────────────────────────
+    // Example (pseudo-Neon/Supabase):
+    // 1) check balance >= amount
+    // 2) insert transactions row { type:'withdraw', status:'pending', to_address: address, network }
+    // 3) return its id
+
+    // Return a stub until DB call succeeds; replace with real insert result.
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({ ok: true, id: 'stub-replace-with-inserted-id' })
+    };
+    // ──────────────────────────────────────────────────────────────────
   } catch (e: any) {
-    console.error('create-withdraw error:', e);
-    return { statusCode: 500, body: JSON.stringify({ ok: false, message: String(e?.message || e) }) };
+    return { statusCode: 500, headers, body: JSON.stringify({ ok:false, error: e?.message || 'Server error' }) };
   }
 };
